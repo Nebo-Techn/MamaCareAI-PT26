@@ -1,0 +1,25 @@
+# Web API
+fastapi
+uvicorn[standard]
+
+# Config / settings
+pydantic-settings
+python-dotenv
+
+# LLM (Gemini free tier) — isolated behind backend/core so the provider can change later
+google-generativeai
+
+# Local, free multilingual embeddings for RAG (no API cost)
+sentence-transformers
+
+# Local, free vector store for retrieval
+chromadb
+
+# Telegram bot channel
+python-telegram-bot
+
+# Testing
+pytest
+httpx
+
+# Optional relational storage (only add sqlalchemy/alembic deps here once backend/alembic is actually used)
