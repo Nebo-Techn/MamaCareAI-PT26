@@ -6,18 +6,12 @@ point at a real, working piece of it and say "I built that," not "I helped."
 
 ## Leadership
 
-- **Kelvin Byabato** — Program Lead. Runs the daily check-in/check-out, the
-  schedule, admin (logbooks, arrival notes, presentations), and is who you
-  escalate to when something's blocked or a decision is outside the team's
-  authority.
-- **Abdillah Issa** — Technical Lead. The go-to for architecture and design
-  questions, the final call on anything touching `modules/safety`, and a
-  second pair of eyes when a PR needs judgment beyond a peer review.
+- **Abdillah Issa** — AI Lead. 
+- **Kelvin Byabato** — PT26 Program Lead. 
 
-Day-to-day, most decisions are yours to make as a team — see
-`docs/COLLABORATION.md` for how. Kelvin and Abdillah are there for the
-decisions that are genuinely above the team's pay grade, not to run the build
-for you.
+
+Teamwork: Day-to-day, most decisions are yours to make as a team — see
+`docs/COLLABORATION.md` for how. Kelvin and Abdillah are there for the important guides and decisions.
 
 ## How tracks get assigned — Day 2 of Week 1, by the team, not for them
 
@@ -41,19 +35,21 @@ everyone will use for the next 8 weeks.
 
 ## Rotating integration owner
 
-Each week, one team member (not the program lead — a peer) holds the **integration
+Each week, Team Lead (or rotate if it fits) holds the **integration
 owner** role for that week:
 
 - Owns keeping `main` in a working, demoable state
 - Is the person others check with before changing something another track depends
   on (an API response shape, a data schema, a function signature)
-- Flags to the team — same day — if two people's work is about to conflict or
+- Flags to the team - same day - if two people's work is about to conflict or
   duplicate
 - Runs the mid-week technical sync (see `docs/COLLABORATION.md`)
 
 Rotate it every Monday, in order: Elia → Walii → Jackson → Kornelly → repeat. Nobody
-is "the lead" for the whole 8 weeks — everyone gets the rep, and no single person
-becomes a bottleneck or a single point of failure. (This is a peer role, distinct
+is "the lead" for the whole 8 weeks - everyone gets the rep, and no single person
+becomes a bottleneck or a single point of failure. 
+
+(This is a peer role, distinct
 from Kelvin and Abdillah above — it's about keeping your own code integrated, not
 about program management or technical sign-off.)
 

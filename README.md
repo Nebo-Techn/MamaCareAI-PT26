@@ -32,13 +32,18 @@ docs/             architecture, team, collaboration, and the 8-week program
 logbooks/         each trainee's weekly work log
 ```
 
-Start here, in order: [docs/TEAM.md](docs/TEAM.md) (who's building this and
-how tracks get assigned), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how
-the pieces fit together and why), [CONTRIBUTING.md](CONTRIBUTING.md) (the
-day-to-day workflow: branches, PRs, Definition of Done), and
-[docs/COLLABORATION.md](docs/COLLABORATION.md) (how four people build this
-independently without colliding). [docs/INTERNSHIP_PROGRAM.md](docs/INTERNSHIP_PROGRAM.md)
-has the full 8-week plan, and [docs/DECISIONS.md](docs/DECISIONS.md) is the
+Start here, in order: 
+- [docs/TEAM.md](docs/TEAM.md) (who's building this and
+how tracks get assigned)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how
+the pieces fit together and why)
+- [CONTRIBUTING.md](CONTRIBUTING.md) (the
+day-to-day workflow: branches, PRs, Definition of Done)
+- [docs/COLLABORATION.md](docs/COLLABORATION.md) (how four people build this
+independently without colliding). 
+- [docs/INTERNSHIP_PROGRAM.md](docs/INTERNSHIP_PROGRAM.md)
+has the full 8-week plan
+- [docs/DECISIONS.md](docs/DECISIONS.md) is the
 running log of cross-team decisions.
 
 ## Quick start
