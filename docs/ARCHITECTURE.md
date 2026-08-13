@@ -16,7 +16,8 @@ emergencies and scope. Text-only for the 8-week build (see
 | Vector store | Chroma (local) | Free, embedded, no server to provision — right-sized for an 8-week MVP's data volume. |
 | Backend | FastAPI | Standard, well-documented, easy for students to learn, async-friendly. |
 | Bot channel | Telegram Bot API | Free, no business-verification approval gate (unlike WhatsApp Business API), real chat UX. |
-| Relational storage (if needed) | SQLite via `backend/alembic` | Only introduced if/when structured data (source register, eval logs) outgrows flat files. |
+| Relational storage | SQLite via `backend/alembic` | Now required: `modules/pipeline` needs real tables for resource state, content versions, review assignments, and the audit trail. Same migrations apply to PostgreSQL if it outgrows SQLite. |
+| Translation (source language → Swahili) | Self-hosted NLLB-200 | Free, no per-call cost, solid Swahili coverage — cost scales with hardware, not corpus size. Isolated behind `modules/pipeline`'s `Translator` port so cloud MT is a config change. |
 
 ## Data flow
 
@@ -24,10 +25,19 @@ emergencies and scope. Text-only for the 8-week build (see
 Vetted source (data/01_source_register)
         │
         ▼
-  ingestion  ──▶  data/02_raw  ──▶  data/03_extracted
+  pipeline ── ingest ──▶ data/02_raw
+        │       │
+        │     extract ──▶ data/03_extracted   (source language, still messy)
+        │       │
+        │  detect language ──▶ translate to Swahili
+        │       │
+        │   HUMAN REVIEW  ──▶ approve  ──▶ publish
+        │                                     │
+        ▼                                     ▼
+                                        data/04_cleaned   (approved Swahili)
         │
         ▼
-  knowledge  ──▶  data/04_cleaned  ──▶  data/05_processed  ──▶  vector store (storage)
+  knowledge  ──▶  data/05_processed  ──▶  vector store (storage)
                                                                        │
 Telegram user ──▶ bot ──▶ api (/chat) ──▶ rag (retrieve + generate) ──┘
                                               │
