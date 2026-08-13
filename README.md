@@ -14,9 +14,11 @@ data/            Source register + the pipeline stages that turn vetted
                   sources into machine-usable knowledge (see data/*/README.md)
 backend/
   modules/
-    ingestion/    fetch & parse source documents
-    knowledge/    clean, chunk, embed
-    storage/      vector store + optional relational data access
+    pipeline/     collect (web/PDF) → detect language → translate to Swahili
+                  → human review → publish. Feeds knowledge/.
+    ingestion/    absorbed into pipeline/ — see its README
+    knowledge/    chunk & embed approved Swahili content
+    storage/      vector store + runtime relational data access
     rag/          retrieval + grounded generation
     safety/       disclaimers, emergency detection, scope refusal, logging
     api/          FastAPI routers (/chat, /health)

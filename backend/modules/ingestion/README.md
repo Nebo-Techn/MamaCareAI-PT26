@@ -1,17 +1,33 @@
-# Ingestion
+# Ingestion — absorbed into `modules/pipeline`
 
-Fetches and parses real source documents (government/NGO publications, WHO/UNICEF
-guidance, health-ministry pages, vetted articles) about Swahili maternal and
-newborn health, and lands them in `data/02_raw` and `data/03_extracted`.
+**This module's work moved.** Fetching and parsing source documents is now
+stages 1–2 of the multilingual data collection pipeline:
 
-Includes scraping utilities (web pages, PDFs) — kept in this module rather than
-a separate `scraping/` folder, since scraping is just one technique ingestion uses,
-not a separate pipeline stage.
+| What you're looking for | Where it lives now |
+|---|---|
+| Fetching web pages, PDFs | `modules/pipeline/adapters/fetchers/` |
+| Parsing HTML, PDF text layers | `modules/pipeline/adapters/extractors/` |
+| Orchestration, retries, dedup | `modules/pipeline/stages/ingest.py`, `stages/extract.py` |
 
-**Input:** an approved entry in `data/01_source_register`
-**Output:** raw file in `data/02_raw`, extracted text in `data/03_extracted`
-**Owner track:** Data & Knowledge
-**Sprint:** 1–2 (build), ongoing (add new sources)
+**The data contract is unchanged:** raw originals still land in
+`data/02_raw`, extracted text still lands in `data/03_extracted`.
 
-Every source ingested here must already have a row in the source register —
-ingestion never starts from a URL that hasn't been vetted first.
+**The vetting rule is unchanged and still enforced:** nothing is fetched
+without an approved row in `data/01_source_register` first. It now lives in
+`modules/pipeline/services/submission.py`, where there is no bypass.
+
+## Why it moved
+
+Ingestion and pipeline stages 1–2 were the same job, owned by the same track,
+scheduled in the same sprint. Two fetchers and two extractors maintained by the
+same people is precisely the duplication `docs/COLLABORATION.md` exists to
+prevent — so there is one of each, behind the `SourceFetcher` and
+`ContentExtractor` ports.
+
+Ingestion also only ever handled the first two steps. Everything after
+extraction — language detection, translation to Swahili, human review,
+publication — had no home before the pipeline module existed.
+
+See `DEC-0002` in `docs/DECISIONS.md`.
+
+**Owner track:** Data & Knowledge (unchanged — same people, one codebase)

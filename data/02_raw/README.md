@@ -1,7 +1,8 @@
 # Raw
 
 Untouched originals exactly as collected (saved PDFs, HTML dumps, saved
-pages) — never hand-edited. Written by `backend/modules/ingestion`.
+pages) — never hand-edited. Written by the ingest stage of
+`backend/modules/pipeline`.
 
 Why this stage exists even though it looks redundant with `03_extracted`: if
 cleaned text downstream ever looks wrong, you need to be able to come back to
