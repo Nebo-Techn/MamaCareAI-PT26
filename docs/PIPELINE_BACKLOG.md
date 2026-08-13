@@ -41,15 +41,24 @@ being silently forgotten. Nothing here is thrown away.
 
 | Sprint | Pipeline work | People needed on pipeline |
 |---|---|---|
-| Sprint 1 remainder | ~14 person-days over 7 working days | **2 people** |
+| Sprint 1 remainder | ~14 person-days over 7 working days | **2 minimum — see note** |
 | Sprint 2 | ~19 person-days over 10 working days | **~2 people** |
 | Sprint 3 | ~18 person-days over 10 working days | **~2 people** |
 | Sprint 4 | ~4 person-days over 5 working days | 1 person, part-time |
 
-That is roughly **half the team, sustained, for five weeks.** The other half
-must stay entirely on the committed product path (real RAG, safety, emergency
-detection, evaluation, deploy). If two people cannot be freed, cut scope using
-§7 rather than running both at half speed — that is how neither ships.
+At two people this is roughly **half the team, sustained, for five weeks.** The
+other half stays entirely on the committed product path (real RAG, safety,
+emergency detection, evaluation, deploy). If two people cannot be freed, cut
+scope using §7 rather than running both at half speed — that is how neither
+ships.
+
+**Two people is the minimum, not the plan.** Sprint 1 at two people has exactly
+zero slack: 14 person-days of work in 14 person-days of capacity, so one sick
+day or one PR left unreviewed overnight fails the 21 Aug gate. The agreed split
+puts **all four people on the pipeline for Sprint 1** and pulls three Sprint 2
+adapter tasks forward to fill the non-critical-path capacity — see §4. That
+buys ~12% slack, and correspondingly reduces the Sprint 2 load below the ~19
+person-days shown above.
 
 ## 3. Track allocation
 
@@ -102,6 +111,71 @@ once costs seven times.
 
 **Sprint 1 exit gate:** `pytest backend/tests/pipeline/` is green, and one test
 walks a resource from `SUBMITTED` to `PUBLISHED` through all seven stages.
+
+### Sprint 1 work split — four people, zero shared files
+
+The critical path (`01 → 04 → 05 → stages → 13`) is **6.5 days of unavoidably
+serial work**. Adding people cannot shorten it — so one person owns that chain
+end to end and never waits, and the others work strictly parallel to it.
+
+Sprint 1 alone is only 14 person-days, which would leave three people idle
+half the sprint. So three **Sprint 2 adapter tasks are pulled forward**: they
+sit behind ports that are already merged, so they have zero dependency on the
+critical path and can start on day one. That is exactly what the ports layer
+was built for.
+
+| | Owns | Tasks | Days |
+|---|---|---|---|
+| **Dev A** | Critical path — no context switching | 01 → 04 → 05 `base.py` → 09 ingest/extract → **13 exit gate** | 6.5 |
+| **Dev B** | Domain + core infrastructure | 03 → 02 state machine → 08 registries → 07 object store → 06 queue → 12 test container → 10 detect/translate | 6.0 |
+| **Dev C** | Real ingestion *(pulled from Sprint 2)* | **17 web fetcher** → **18 HTML extractor** → 11 store/review/publish | 5.5 |
+| **Dev D** | Persistence + language *(pulled from Sprint 2)* | **15 SQL repositories** → **19 fastText detector** → **22 chunker** | 6.5 |
+
+**24.5 person-days against 28 capacity — about 12% slack.** A two-person split
+of the same work has exactly zero slack, which is why this is the safer shape
+even though the sprint total is larger.
+
+#### Day-1 sequencing — the only tight coupling all sprint
+
+1. **Dev B ships PIPE-03 first.** It rewrites every test file, so it must merge
+   before anyone else writes a test.
+2. **Dev A ships PIPE-01 by lunch.** Dev B and Dev D both need the domain models.
+3. **Dev C starts at 09:00.** The web fetcher needs only `ports/fetcher.py`,
+   which is already merged. No waiting on anyone.
+
+#### File ownership — nobody touches another person's file
+
+| Dev | Files |
+|---|---|
+| **A** | `domain/enums.py`, `domain/models.py`, `tests/fakes.py`, `stages/base.py`, `stages/ingest.py`, `stages/extract.py`, `tests/test_stages_ingest_extract.py` |
+| **B** | `domain/state_machine.py`, `registry.py`, `container.py`, `adapters/queue/*`, `adapters/storage/keys.py`, `adapters/storage/filesystem_object_store.py`, `adapters/translation/passthrough_translator.py`, `stages/detect_language.py`, `stages/translate.py`, `tests/test_stages_language_translate.py` |
+| **C** | `adapters/fetchers/web_fetcher.py`, `adapters/extractors/html_extractor.py`, `stages/store.py`, `stages/review.py`, `stages/publish.py`, `tests/test_stages_store_review_publish.py` |
+| **D** | `adapters/storage/sql_repositories.py`, `adapters/language/fasttext_detector.py`, `adapters/translation/chunker.py`, `tests/test_chunker.py` |
+
+`tests/test_stages.py` was split into three files along this boundary for
+exactly this reason — as one file, Devs A, B and C would have hit a three-way
+merge conflict every day of the sprint.
+
+#### Assignment notes
+
+- **PIPE-05 (`stages/base.py`) is reviewed by Abdillah**, not by a peer. Every
+  stage inherits its correctness; a subtle mistake there multiplies by seven.
+- **PIPE-15 (SQL repositories)** is the hardest task off the critical path —
+  conditional updates and atomic claims, both of which pass single-threaded
+  tests while being broken. Give it to whoever rated highest on the skills
+  self-assessment.
+- **Fix reviewer pairs now**, not ad hoc: A↔B and C↔D. Four people means more
+  PRs crossing more boundaries, and "whoever's free" stops working at this size.
+- **The stage tasks assume THIN implementations** — status transitions and job
+  publishing, with real logic left as TODO for Sprint 2. If someone starts
+  implementing real dedup logic in `ingest.py` this week, the sprint fails.
+
+#### What this costs
+
+Putting all four people on the pipeline means Sprint 1's originally committed
+goals — the hello-world Telegram round trip, vector store setup, and first
+source vetting — **do not happen this sprint**. That is a scope decision for
+Kelvin, made knowingly, not discovered at the 21 Aug review.
 
 ---
 
