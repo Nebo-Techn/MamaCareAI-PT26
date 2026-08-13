@@ -39,12 +39,6 @@ class ReviewStage(Stage):
     def handle(self, resource: Resource) -> StageResult:
         """Park the resource in IN_REVIEW and stop.
 
-        TODO (junior dev):
-              return StageResult(
-                  next_status=ResourceStatus.IN_REVIEW,
-                  next_stage=None,   # <- the pipeline stops here, ON PURPOSE
-              )
-
         `next_stage=None` is the whole point: no worker advances this resource.
         It waits for a human. The next transition comes from
         `ReviewService.submit_decision()` when a reviewer acts.
@@ -55,4 +49,7 @@ class ReviewStage(Stage):
         review is content that never reaches a user — the pipeline looks
         perfectly healthy while delivering nothing.
         """
-        raise NotImplementedError
+        return StageResult(
+            next_status=ResourceStatus.IN_REVIEW,
+            next_stage=None,
+        )
