@@ -32,7 +32,7 @@ from ...domain.models import NormalizedDocument, TextBlock
 from ...ports.extractor import ContentExtractor
 
 # Zero-width / formatting characters that should never appear in extracted text.
-_ZERO_WIDTH = "".join(["\u200b", "\u200c", "\u200d", "\ufeff"])
+_ZERO_WIDTH = "\u200b\u200c\u200d\ufeff"
 _WHITESPACE_RE = re.compile(r"\s+")
 _CHARSET_IN_HTML_RE = re.compile(
     rb'<meta[^>]+charset\s*=\s*["\']?\s*([a-zA-Z0-9_\-]+)',
@@ -145,7 +145,9 @@ class HtmlExtractor(ContentExtractor):
 
     @staticmethod
     def _charset_from_header(content_type: str) -> str | None:
-        match = re.search(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", content_type, re.I)
+        match = re.search(
+            r"charset\s*=\s*([a-zA-Z0-9_\-]+)", content_type, re.IGNORECASE
+        )
         return match.group(1) if match else None
 
     @staticmethod
