@@ -20,8 +20,6 @@ What is covered, per the plan:
 
 from __future__ import annotations
 
-import pytest
-
 from modules.pipeline.domain.enums import ResourceStatus, SourceType, VersionAuthorKind
 from modules.pipeline.domain.models import (
     ContentVersion,
@@ -35,7 +33,6 @@ from modules.pipeline.ports.search_index import IndexedResource
 from modules.pipeline.stages.publish import PublishStage
 from modules.pipeline.stages.review import ReviewStage
 from modules.pipeline.stages.store import StoreStage
-
 
 # --- fakes (see file docstring) ----------------------------------------------
 
@@ -239,7 +236,7 @@ def test_store_already_swahili_path_indexes_document_directly() -> None:
 def test_store_handle_running_twice_does_not_double_the_review_assignments() -> None:
     versions = FakeVersionRepository()
     versions.save_version(make_version())
-    stage, search, review_service = build_store_stage(versions=versions)
+    stage, _search, review_service = build_store_stage(versions=versions)
     resource = make_resource(status=ResourceStatus.TRANSLATED)
 
     stage.handle(resource)
@@ -304,7 +301,7 @@ def test_publish_stage_publishes_the_latest_version_not_version_one() -> None:
 def test_publish_stage_records_who_approved_and_which_version() -> None:
     versions = FakeVersionRepository()
     versions.save_version(make_version(version_number=2, text="approved"))
-    stage, search = build_publish_stage(versions=versions)
+    stage, _search = build_publish_stage(versions=versions)
 
     result = stage.handle(
         make_resource(
