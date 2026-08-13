@@ -88,4 +88,16 @@ real contract, so a richer UI can be built later against it without touching
 the workflow.
 **Supersedes:** —
 
-*(Next entries start at DEC-0005, made by the team as real decisions come up.)*
+## DEC-0005 — Tables serialize to row-by-row list items, flagged in metadata
+Date: 2026-08-13 · Decided by: *(pending — Dev C)* · Affects: pipeline (extraction)
+
+**Decision:** In `HtmlExtractor`, each table row becomes a `list_item` block with
+cells joined by " | ", and the document is flagged `contains_tables: true` in
+`source_metadata` so reviewers look closely.
+**Why:** Health documents put dosages and schedules in tables; flattening them
+destroys the row/column meaning that carries the safety-critical information.
+Row-by-row list items keep each row readable while a dedicated table model is
+deferred past the sprint window.
+**Supersedes:** —
+
+*(Next entries start at DEC-0006, made by the team as real decisions come up.)*

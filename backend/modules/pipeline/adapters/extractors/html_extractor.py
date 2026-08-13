@@ -10,12 +10,49 @@ Use a readability-style main-content extractor (trafilatura is the strongest
 option for this and handles multilingual pages well) rather than hand-written
 BeautifulSoup selectors. Hand-written selectors work on the one site you tested
 and break on the next, and you will be maintaining forty of them by Sprint 4.
+
+TABLES (see docs/DECISIONS.md): health documents put dosages and schedules in
+tables, and flattening them destroys the row/column meaning that carries the
+safety-critical information. Each `<tr>` is serialized as a `list_item` with
+cells joined by " | ", and the document is flagged in `source_metadata` as
+containing tables so reviewers look closely.
 """
 
 from __future__ import annotations
 
-from ...domain.models import NormalizedDocument
+import re
+import unicodedata
+from datetime import datetime, timezone
+
+import chardet
+import trafilatura
+
+from ...domain.errors import ExtractionError
+from ...domain.models import NormalizedDocument, TextBlock
 from ...ports.extractor import ContentExtractor
+
+# Zero-width / formatting characters that should never appear in extracted text.
+_ZERO_WIDTH = "".join(["\u200b", "\u200c", "\u200d", "\ufeff"])
+_WHITESPACE_RE = re.compile(r"\s+")
+_CHARSET_IN_HTML_RE = re.compile(
+    rb'<meta[^>]+charset\s*=\s*["\']?\s*([a-zA-Z0-9_\-]+)',
+    re.IGNORECASE,
+)
+_BLOCK_TAG_TO_KIND = {
+    "head": "heading",
+    "p": "paragraph",
+    "quote": "paragraph",
+    "code": "paragraph",
+    "item": "list_item",
+    "row": "list_item",
+    "figcaption": "caption",
+    "figure": "caption",
+}
+
+# Minimum total characters across blocks. Below this the extraction is
+# boilerplate leftovers ("cookie", "accept", a lone nav link) masquerading as
+# content — an empty extraction is a failure, not a success with no content.
+_MIN_EXTRACTED_CHARS = 40
 
 
 class HtmlExtractor(ContentExtractor):
@@ -24,51 +61,148 @@ class HtmlExtractor(ContentExtractor):
     def can_handle(self, content_type: str, content: bytes) -> bool:
         """True for HTML payloads.
 
-        TODO: check content_type for "text/html" OR sniff for "<html" in the
-        first ~1KB. Servers mislabel content, so do not trust the header alone.
+        Servers mislabel content, so do not trust the header alone — also sniff
+        for an opening "<html" / "<!doctype html" tag in the first ~1KB.
         """
-        raise NotImplementedError
+        if "text/html" in (content_type or "").lower():
+            return True
+        head = content[:1024].lower()
+        return b"<html" in head or b"<!doctype html" in head
 
     def extract(
         self, resource_id: str, content: bytes, *, metadata: dict[str, object]
     ) -> NormalizedDocument:
         """Turn HTML into structured blocks.
 
-        TODO (junior dev) — implement in this order:
-
-          1. DECODE CORRECTLY. Charset from the HTTP header, then the <meta>
-             tag, then chardet as a last resort. Getting this wrong is how
-             Swahili text arrives as "Ã¤" soup that survives all the way into
-             the vector store.
-
-          2. MAIN CONTENT EXTRACTION (trafilatura or readability-lxml). Drop
-             nav, header, footer, aside, cookie banners, "related articles".
-
-          3. BUILD TEXTBLOCKS, PRESERVING STRUCTURE:
-                 <h1>-<h6>       -> kind="heading"
-                 <p>             -> kind="paragraph"
-                 <li>            -> kind="list_item"
-                 <figcaption>    -> kind="caption"
-             Set `order` in document order, starting at 0.
-             DO NOT flatten to one string. Health guidance is
-             heavily structured ("Danger signs:" followed by a list), and a
-             reviewer comparing a flattened wall of text to the original cannot
-             do their job.
-
-          4. TABLES: a real decision, not an oversight. Health documents put
-             dosages and schedules in tables, and flattening them destroys the
-             row/column meaning that carries the safety-critical information.
-             Start by serializing each row as a list_item and FLAGGING the
-             document in metadata as containing tables, so reviewers look
-             closely. Log a proper decision in docs/DECISIONS.md.
-
-          5. METADATA: <title>, author/byline, published date (JSON-LD or
-             <meta> tags), canonical URL, language attribute if present.
-
-          6. NORMALIZE: unicodedata.normalize("NFC", ...), collapse runs of
-             whitespace, strip zero-width characters.
-
-          7. Raise ExtractionError if what is left is below the quality bar —
-             an empty extraction is a failure, not a success with no content.
+        Order of operations matters:
+          1. decode correctly (HTTP header charset -> <meta> tag -> chardet)
+          2. let trafilatura drop nav/header/footer/cookie banners
+          3. build TextBlocks preserving structure, in document order
+          4. serialize table rows, flag the document as containing tables
+          5. metadata from trafilatura (title, author, date, canonical, lang)
+          6. normalize (NFC, collapse whitespace, strip zero-width)
+          7. raise ExtractionError on empty / below-quality extraction
         """
-        raise NotImplementedError
+        html_text = self._decode(content, metadata)
+
+        extracted = trafilatura.bare_extraction(
+            html_text,
+            output_format="python",
+            with_metadata=True,
+        )
+        if extracted is None or extracted.body is None:
+            raise ExtractionError(
+                f"No extractable content in {resource_id}",
+                resource_id=resource_id,
+            )
+
+        blocks, contains_tables = self._build_blocks(extracted.body)
+
+        if not blocks:
+            raise ExtractionError(
+                f"Extraction of {resource_id} produced no usable blocks",
+                resource_id=resource_id,
+            )
+        total_chars = sum(len(block.text) for block in blocks)
+        if total_chars < _MIN_EXTRACTED_CHARS:
+            raise ExtractionError(
+                f"Extraction of {resource_id} below quality bar "
+                f"({total_chars} chars < {_MIN_EXTRACTED_CHARS})",
+                resource_id=resource_id,
+            )
+
+        source_metadata = dict(metadata)
+        if extracted.language:
+            source_metadata["language"] = extracted.language
+        if contains_tables:
+            source_metadata["contains_tables"] = True
+
+        return NormalizedDocument(
+            resource_id=resource_id,
+            title=extracted.title,
+            author=extracted.author,
+            published_date=self._parse_date(extracted.date),
+            blocks=tuple(blocks),
+            source_metadata=source_metadata,
+        )
+
+    # --- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _decode(content: bytes, metadata: dict[str, object]) -> str:
+        charset = HtmlExtractor._charset_from_header(
+            str(metadata.get("content_type", ""))
+        )
+        if charset is None:
+            charset = HtmlExtractor._charset_from_html(content)
+        if charset is None:
+            detected = chardet.detect(content)
+            charset = detected.get("encoding")
+        try:
+            return content.decode(charset or "utf-8")
+        except (LookupError, UnicodeDecodeError):
+            return content.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _charset_from_header(content_type: str) -> str | None:
+        match = re.search(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", content_type, re.I)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _charset_from_html(content: bytes) -> str | None:
+        match = _CHARSET_IN_HTML_RE.search(content[:4096])
+        return match.group(1).decode("ascii") if match else None
+
+    @staticmethod
+    def _build_blocks(
+        body,
+    ) -> tuple[list[TextBlock], bool]:
+        """Walk trafilatura's article tree and emit TextBlocks in order."""
+        blocks: list[TextBlock] = []
+        contains_tables = False
+        order = 0
+        for el in body.iter():
+            kind = _BLOCK_TAG_TO_KIND.get(el.tag)
+            if kind is None:
+                continue
+            if el.tag == "row":
+                contains_tables = True
+                text = HtmlExtractor._row_to_text(el)
+            elif el.tag == "figure":
+                # trafilatura usually drops figures; only keep one if it has text.
+                text = HtmlExtractor._text_of(el)
+            else:
+                text = HtmlExtractor._text_of(el)
+            text = HtmlExtractor._normalize(text)
+            if not text:
+                continue
+            blocks.append(TextBlock(order=order, kind=kind, text=text))
+            order += 1
+        return blocks, contains_tables
+
+    @staticmethod
+    def _row_to_text(row) -> str:
+        cells = [HtmlExtractor._text_of(cell) for cell in row]
+        return " | ".join(c for c in cells if c)
+
+    @staticmethod
+    def _text_of(el) -> str:
+        return "".join(el.itertext()).strip()
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        text = unicodedata.normalize("NFC", text)
+        text = text.translate(str.maketrans("", "", _ZERO_WIDTH))
+        return _WHITESPACE_RE.sub(" ", text).strip()
+
+    @staticmethod
+    def _parse_date(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
