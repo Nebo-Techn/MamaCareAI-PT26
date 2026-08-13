@@ -70,7 +70,9 @@ class WebFetcher(SourceFetcher):
             parser.set_url(f"https://{domain}/robots.txt")
             try:
                 parser.read()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - intentional: fail open
+                # An unreachable robots.txt must not block every fetch on a
+                # domain that has no robots.txt at all.
                 pass
             self._robots_cache[domain] = parser
         return self._robots_cache[domain]
