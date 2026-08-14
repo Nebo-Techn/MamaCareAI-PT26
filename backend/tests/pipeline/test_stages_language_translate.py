@@ -8,13 +8,14 @@ from backend.modules.pipeline.domain.models import (
     TextBlock,
 )
 
+
 def test_low_confidence_routes_to_human_confirmation():
-    
+
     container = build_test_container(
         detector="low_confidence",  # type: ignore
     )
     stage = container.stage("detect_language")
-    
+
     # Create a resource in EXTRACTED state
     resource = Resource(
         resource_id="test-1",
@@ -23,7 +24,7 @@ def test_low_confidence_routes_to_human_confirmation():
         status=ResourceStatus.EXTRACTED,
     )
     container.resources.save(resource)
-    
+
     # Create a normalized document
     doc = NormalizedDocument(
         resource_id="test-1",
@@ -33,10 +34,10 @@ def test_low_confidence_routes_to_human_confirmation():
         blocks=(TextBlock(order=0, kind="paragraph", text="Test content"),),
     )
     container.documents.save_document(doc)
-    
+
     # Run the stage
     result = stage.handle(resource)
-    
+
     # Assert it routes to human confirmation
     assert result.next_status == ResourceStatus.NEEDS_LANGUAGE_CONFIRMATION
     assert result.next_stage is None
@@ -52,7 +53,7 @@ def test_already_swahili_skips_translation():
         detector="swahili",  # type: ignore
     )
     stage = container.stage("detect_language")
-    
+
     resource = Resource(
         resource_id="test-2",
         source_type=SourceType.WEB,
@@ -60,18 +61,22 @@ def test_already_swahili_skips_translation():
         status=ResourceStatus.EXTRACTED,
     )
     container.resources.save(resource)
-    
+
     doc = NormalizedDocument(
         resource_id="test-2",
         title="Test Swahili",
         author=None,
         published_date=None,
-        blocks=(TextBlock(order=0, kind="paragraph", text="Habari, hii ni content ya Kiswahili"),),
+        blocks=(
+            TextBlock(
+                order=0, kind="paragraph", text="Habari, hii ni content ya Kiswahili"
+            ),
+        ),
     )
     container.documents.save_document(doc)
-    
+
     result = stage.handle(resource)
-    
+
     # Should skip translation and go to store
     assert result.next_status == ResourceStatus.LANGUAGE_DETECTED
     assert result.next_stage == "store"
@@ -84,7 +89,7 @@ def test_other_language_routes_to_translation():
         detector="english",  # type: ignore
     )
     stage = container.stage("detect_language")
-    
+
     resource = Resource(
         resource_id="test-3",
         source_type=SourceType.WEB,
@@ -92,7 +97,7 @@ def test_other_language_routes_to_translation():
         status=ResourceStatus.EXTRACTED,
     )
     container.resources.save(resource)
-    
+
     doc = NormalizedDocument(
         resource_id="test-3",
         title="English Test",
@@ -101,9 +106,9 @@ def test_other_language_routes_to_translation():
         blocks=(TextBlock(order=0, kind="paragraph", text="This is English content"),),
     )
     container.documents.save_document(doc)
-    
+
     result = stage.handle(resource)
-    
+
     # Should route to translation
     assert result.next_status == ResourceStatus.LANGUAGE_DETECTED
     assert result.next_stage == "translate"
@@ -118,7 +123,7 @@ def test_human_confirmed_language_is_not_overwritten():
         detector="english",  # type: ignore
     )
     stage = container.stage("detect_language")
-    
+
     # Create a resource with human-confirmed language
     resource = Resource(
         resource_id="test-4",
@@ -129,18 +134,20 @@ def test_human_confirmed_language_is_not_overwritten():
         source_metadata={"language_confirmed_by": "user@example.com"},
     )
     container.resources.save(resource)
-    
+
     doc = NormalizedDocument(
         resource_id="test-4",
         title="French Test",
         author=None,
         published_date=None,
-        blocks=(TextBlock(order=0, kind="paragraph", text="Ceci est du contenu français"),),
+        blocks=(
+            TextBlock(order=0, kind="paragraph", text="Ceci est du contenu français"),
+        ),
     )
     container.documents.save_document(doc)
-    
+
     result = stage.handle(resource)
-    
+
     # Should preserve human-confirmed language
     assert result.resource_changes.get("detected_language") == "fr"
     assert result.next_status == ResourceStatus.LANGUAGE_DETECTED
@@ -155,7 +162,7 @@ def test_creates_machine_version_one_with_engine_recorded():
     """
     container = build_test_container()
     stage = container.stage("translate")
-    
+
     resource = Resource(
         resource_id="test-5",
         source_type=SourceType.WEB,
@@ -164,7 +171,7 @@ def test_creates_machine_version_one_with_engine_recorded():
         detected_language="en",
     )
     container.resources.save(resource)
-    
+
     doc = NormalizedDocument(
         resource_id="test-5",
         title="Test",
@@ -173,9 +180,9 @@ def test_creates_machine_version_one_with_engine_recorded():
         blocks=(TextBlock(order=0, kind="paragraph", text="Hello world"),),
     )
     container.documents.save_document(doc)
-    
-    result = stage.handle(resource)
-    
+
+    stage.handle(resource)
+
     # Verify machine version was created
     machine_version = container.versions.get_machine_version(resource.resource_id)
     assert machine_version is not None
@@ -185,10 +192,10 @@ def test_creates_machine_version_one_with_engine_recorded():
 
 
 def test_rerun_does_not_create_a_second_machine_version():
-    
+
     container = build_test_container()
     stage = container.stage("translate")
-    
+
     resource = Resource(
         resource_id="test-6",
         source_type=SourceType.WEB,
@@ -197,7 +204,7 @@ def test_rerun_does_not_create_a_second_machine_version():
         detected_language="en",
     )
     container.resources.save(resource)
-    
+
     doc = NormalizedDocument(
         resource_id="test-6",
         title="Test",
@@ -206,15 +213,15 @@ def test_rerun_does_not_create_a_second_machine_version():
         blocks=(TextBlock(order=0, kind="paragraph", text="Hello world"),),
     )
     container.documents.save_document(doc)
-    
+
     # First run
-    result1 = stage.handle(resource)
+    stage.handle(resource)
     version1_count = len(container.versions.list_versions(resource.resource_id))
-    
+
     # Second run (redelivery)
-    result2 = stage.handle(resource)
+    stage.handle(resource)
     version2_count = len(container.versions.list_versions(resource.resource_id))
-    
+
     # Should not create a second version
     assert version1_count == version2_count
 
@@ -227,7 +234,7 @@ def test_length_mismatch_from_translator_raises():
         translator="mismatched",  # type: ignore
     )
     stage = container.stage("translate")
-    
+
     resource = Resource(
         resource_id="test-7",
         source_type=SourceType.WEB,
@@ -236,7 +243,7 @@ def test_length_mismatch_from_translator_raises():
         detected_language="en",
     )
     container.resources.save(resource)
-    
+
     doc = NormalizedDocument(
         resource_id="test-7",
         title="Test",
@@ -249,12 +256,12 @@ def test_length_mismatch_from_translator_raises():
         ),
     )
     container.documents.save_document(doc)
-    
+
     # Should raise on length mismatch
     from backend.modules.pipeline.domain.errors import TranslationError
-    
+
     try:
-        result = stage.handle(resource)
+        stage.handle(resource)
         assert False, "Expected TranslationError to be raised"
     except TranslationError:
         pass  # Expected
@@ -266,7 +273,7 @@ def test_block_structure_survives_translation():
     """
     container = build_test_container()
     stage = container.stage("translate")
-    
+
     resource = Resource(
         resource_id="test-8",
         source_type=SourceType.WEB,
@@ -275,7 +282,7 @@ def test_block_structure_survives_translation():
         detected_language="en",
     )
     container.resources.save(resource)
-    
+
     doc = NormalizedDocument(
         resource_id="test-8",
         title="Test",
@@ -289,15 +296,12 @@ def test_block_structure_survives_translation():
         ),
     )
     container.documents.save_document(doc)
-    
-    result = stage.handle(resource)
-    
+
+    stage.handle(resource)
+
     # Verify machine version preserves structure
     machine_version = container.versions.get_machine_version(resource.resource_id)
     assert machine_version is not None
     # Structure should be preserved in the translation units
     assert len(machine_version.units) > 0
-    assert all(
-        tu.order < len(machine_version.units)
-        for tu in machine_version.units
-    )
+    assert all(tu.order < len(machine_version.units) for tu in machine_version.units)
