@@ -23,7 +23,14 @@ revoked at the worst moment.
 
 from __future__ import annotations
 
+import time
+import urllib.robotparser
+from urllib.parse import urlparse
+
+import httpx
+
 from ...domain.enums import SourceType
+from ...domain.errors import FetchError, PermanentError, ProviderRateLimited
 from ...ports.fetcher import FetchResult, SourceFetcher
 
 
@@ -37,55 +44,97 @@ class WebFetcher(SourceFetcher):
         max_bytes: int,
         user_agent: str,
         respect_robots: bool = True,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        # TODO: create ONE httpx.Client here and reuse it. A new client per
-        # request throws away connection pooling and TLS session reuse, which
-        # is most of the cost of an HTTPS request.
         self._timeout = timeout_seconds
         self._max_bytes = max_bytes
         self._user_agent = user_agent
         self._respect_robots = respect_robots
+        self._client = httpx.Client(
+            timeout=timeout_seconds,
+            headers={"User-Agent": user_agent},
+            follow_redirects=True,
+            transport=transport,
+        )
+        self._robots_cache: dict[str, urllib.robotparser.RobotFileParser] = {}
+        self._last_request_time: dict[str, float] = {}
+        self._min_delay_seconds = 1.0
 
     @property
     def source_type(self) -> SourceType:
         return SourceType.WEB
 
+    def _get_robots_parser(self, domain: str) -> urllib.robotparser.RobotFileParser:
+        if domain not in self._robots_cache:
+            parser = urllib.robotparser.RobotFileParser()
+            parser.set_url(f"https://{domain}/robots.txt")
+            try:
+                parser.read()
+            except Exception:  # noqa: BLE001, S110 - intentional: fail open
+                # An unreachable robots.txt must not block every fetch on a
+                # domain that has no robots.txt at all.
+                pass
+            self._robots_cache[domain] = parser
+        return self._robots_cache[domain]
+
+    def _respect_rate_limit(self, domain: str) -> None:
+        last = self._last_request_time.get(domain)
+        if last is not None:
+            elapsed = time.monotonic() - last
+            if elapsed < self._min_delay_seconds:
+                time.sleep(self._min_delay_seconds - elapsed)
+        self._last_request_time[domain] = time.monotonic()
+
     def fetch(self, source_url: str) -> FetchResult:
-        """Download a web page.
+        domain = urlparse(source_url).netloc
 
-        TODO (junior dev) — implement in this order:
+        if self._respect_robots and domain:
+            parser = self._get_robots_parser(domain)
+            if not parser.can_fetch(self._user_agent, source_url):
+                raise PermanentError(f"robots.txt disallows fetching {source_url}")
 
-          1. ROBOTS.TXT CHECK (when enabled):
-                 urllib.robotparser, CACHED PER DOMAIN.
-             Re-fetching robots.txt before every page doubles your request
-             count against the site you are trying to be polite to.
-             Disallowed -> raise PermanentError, and record the reason in
-             metadata so the compliance gate can see it later.
+        self._respect_rate_limit(domain)
 
-          2. RATE LIMIT: minimum delay between requests to the same domain
-             (start at ~1 second). Track last-request-time per domain.
+        try:
+            with self._client.stream("GET", source_url) as response:
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    retry_after_seconds = float(retry_after) if retry_after else None
+                    raise ProviderRateLimited(
+                        f"Rate limited fetching {source_url}",
+                        retry_after_seconds=retry_after_seconds,
+                    )
 
-          3. GET with timeout, following redirects, sending the User-Agent.
+                if response.status_code in (404, 403):
+                    raise PermanentError(f"{response.status_code} fetching {source_url}")
 
-          4. ENFORCE MAX SIZE WHILE STREAMING:
-                 for chunk in response.iter_bytes(): ...
-             Abort as soon as the accumulated size exceeds max_bytes.
+                if response.status_code >= 500:
+                    raise FetchError(f"{response.status_code} fetching {source_url}")
 
-          5. MAP STATUS CODES ONTO OUR ERROR TYPES:
-                 2xx           -> success
-                 429           -> ProviderRateLimited (honour Retry-After)
-                 5xx / timeout -> FetchError          (retryable)
-                 404 / 403     -> PermanentError      (do not retry)
+                response.raise_for_status()
 
-          6. COLLECT METADATA WHILE IT IS FREE:
-                 final URL after redirects, Content-Type, Last-Modified, ETag,
-                 <title>, and any licence/copyright meta tags.
-             That last one feeds the compliance gate. Capturing it now costs
-             nothing; going back for it months later means re-fetching every page.
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > self._max_bytes:
+                        raise PermanentError(f"{source_url} exceeded max_bytes={self._max_bytes}")
+                    chunks.append(chunk)
 
-          7. RETURN FetchResult(content=<raw bytes>, ...).
-             Raw HTML — do NOT parse here. Parsing is the extractor's job, and
-             keeping them separate means a parser fix can be re-run against
-             already-downloaded bytes.
-        """
-        raise NotImplementedError
+                content = b"".join(chunks)
+                metadata: dict[str, object] = {
+                    "final_url": str(response.url),
+                    "content_type": response.headers.get("content-type", ""),
+                    "last_modified": response.headers.get("last-modified"),
+                    "etag": response.headers.get("etag"),
+                }
+
+                return FetchResult(
+                    content=content,
+                    content_type=response.headers.get("content-type", "text/html"),
+                    metadata=metadata,
+                )
+        except httpx.TimeoutException as exc:
+            raise FetchError(f"Timeout fetching {source_url}") from exc
+        except httpx.TransportError as exc:
+            raise FetchError(f"Connection error fetching {source_url}") from exc
