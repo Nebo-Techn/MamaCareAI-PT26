@@ -78,7 +78,7 @@ class Resource:
     # Free-form provenance from the source platform (title, author, publisher...).
     source_metadata: dict[str, object] = field(default_factory=dict)
 
-    def with_status(self, status: ResourceStatus, **changes: object) -> "Resource":
+    def with_status(self, status: ResourceStatus, **changes: object) -> Resource:
         """Return a copy in a new status, stamping `updated_at`.
 
         Use this instead of mutating. It keeps the audit trail honest and makes

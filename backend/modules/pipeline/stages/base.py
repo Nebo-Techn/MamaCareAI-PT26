@@ -25,8 +25,7 @@ import logging
 from abc import ABC, abstractmethod
 
 from ..domain.enums import ResourceStatus
-from ..domain.errors import PipelineError
-from ..domain.models import AuditEvent, Job, Resource
+from ..domain.models import Job, Resource
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import ResourceRepository, ReviewRepository
 

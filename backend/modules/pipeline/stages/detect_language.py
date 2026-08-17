@@ -23,7 +23,11 @@ from ..domain.enums import ResourceStatus
 from ..domain.models import Resource
 from ..ports.job_queue import JobQueue
 from ..ports.language_detector import LanguageDetector
-from ..ports.repositories import DocumentRepository, ResourceRepository, ReviewRepository
+from ..ports.repositories import (
+    DocumentRepository,
+    ResourceRepository,
+    ReviewRepository,
+)
 from .base import Stage, StageResult
 
 

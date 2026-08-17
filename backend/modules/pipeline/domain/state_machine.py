@@ -29,7 +29,6 @@ TODO (junior dev):
 from __future__ import annotations
 
 from .enums import ResourceStatus
-from .errors import InvalidStateTransition
 
 S = ResourceStatus
 
