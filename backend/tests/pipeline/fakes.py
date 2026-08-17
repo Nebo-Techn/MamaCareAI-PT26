@@ -100,7 +100,7 @@ from backend.modules.pipeline.ports.deduplicator import Deduplicator
 from backend.modules.pipeline.ports.extractor import ContentExtractor
 from backend.modules.pipeline.ports.fetcher import FetchResult, SourceFetcher
 from backend.modules.pipeline.ports.job_queue import JobQueue
-from backend.modules.pipeline.ports.language_detector import LanguageDetector
+from backend.modules.pipeline.ports.language_detector import DetectionResult, LanguageDetector
 from backend.modules.pipeline.ports.object_store import ObjectStore
 from backend.modules.pipeline.ports.repositories import (
     DocumentRepository,
