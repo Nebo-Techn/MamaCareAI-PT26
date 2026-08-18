@@ -36,7 +36,8 @@ httpx
 # Sprint 1 — skeleton. Already covered by pydantic-settings/pytest above.
 
 # Sprint 2 — real ingestion (web + PDF), relational state, language detection
-# trafilatura         # main-content extraction from HTML (drops nav/boilerplate)
+trafilatura         # main-content extraction from HTML (drops nav/boilerplate)
+chardet             # charset fallback when decoding HTML (meta/header both absent)
 # pymupdf             # PDF text-layer extraction
 # sqlalchemy          # repositories; same code path for SQLite (dev) and Postgres (prod)
 # fasttext-wheel      # lid.176 language detection (prebuilt wheels; plain `fasttext` needs a compiler)

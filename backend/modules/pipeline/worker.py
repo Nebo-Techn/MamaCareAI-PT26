@@ -20,9 +20,7 @@ HPA. Do not build seven images.
 
 from __future__ import annotations
 
-import argparse
 import logging
-import signal
 import sys
 
 logger = logging.getLogger(__name__)

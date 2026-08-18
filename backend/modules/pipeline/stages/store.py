@@ -32,7 +32,7 @@ from ..ports.repositories import (
     ReviewRepository,
     VersionRepository,
 )
-from ..ports.search_index import SearchIndex
+from ..ports.search_index import IndexedResource, SearchIndex
 from .base import Stage, StageResult
 
 
@@ -72,43 +72,44 @@ class StoreStage(Stage):
     def handle(self, resource: Resource) -> StageResult:
         """Index the content and create the review assignment.
 
-        TODO (junior dev) — implement in this order:
-
-          1. RESOLVE THE TEXT TO INDEX:
-                 version = self._versions.get_latest(resource.resource_id)
-                 if version is None:
-                     # already-Swahili path: no MT version exists, so index the
-                     # extracted document text directly
-                     document = self._documents.get_document(resource.resource_id)
-             Handle BOTH paths. Forgetting the already-Swahili case means
-             Swahili-native sources silently never become searchable — a bug
-             that hides for weeks because everything else looks fine.
-
-          2. INDEX IT:
-                 self._search.index(IndexedResource(
-                     resource_id=..., title=..., translated_text=...,
-                     source_url=resource.source_url, status=...,
-                     version_number=version.version_number if version else 0,
-                     metadata={"language": resource.detected_language, ...}))
-             Upsert by resource_id so re-indexing replaces rather than duplicates.
-
-          3. OPEN THE REVIEW TASK:
-                 self._review_service.enqueue_for_review(resource, version)
-             Priority comes from the translation confidence signal — see
-             `services/review_service.py`. Low-confidence translations should
-             reach a human first.
-
-          4. RETURN:
-                 StageResult(next_status=ResourceStatus.STORED,
-                             next_stage="review")
-             The "review" job is a workflow marker: it moves STORED -> IN_REVIEW
-             and then waits. Humans, not workers, drive it from there.
-
-        FAILURE MODE TO GET RIGHT: the search index is a DERIVED read model. If
-        indexing fails, the content is still safe in Postgres and object
-        storage — this stage retries, and nothing is lost. Never write to the
-        index as if it were the source of truth, and make sure the
-        `reindex` management command can rebuild it from scratch. Test that
-        command before you need it in an incident.
+        Two paths, both must index:
+          - the resource has a machine translation (normal path): index the
+            latest version's translated text;
+          - it is already-Swahili (skipped translation): index the extracted
+            document directly. Forgetting this case silently makes
+            Swahili-native sources unsearchable while everything else works.
         """
-        raise NotImplementedError
+        version = self._versions.get_latest(resource.resource_id)
+        if version is not None:
+            translated_text = self._units_to_text(version.units)
+            version_number = version.version_number
+            title = resource.source_metadata.get("title")
+        else:
+            document = self._documents.get_document(resource.resource_id)
+            translated_text = "\n\n".join(block.text for block in document.blocks)
+            version_number = 0
+            title = document.title
+
+        self._search.index(
+            IndexedResource(
+                resource_id=resource.resource_id,
+                title=title,
+                translated_text=translated_text,
+                source_url=resource.source_url,
+                status=ResourceStatus.STORED.value,
+                version_number=version_number,
+                metadata={"language": resource.detected_language or ""},
+            )
+        )
+
+        self._review_service.enqueue_for_review(resource, version)
+
+        return StageResult(
+            next_status=ResourceStatus.STORED,
+            next_stage="review",
+        )
+
+    @staticmethod
+    def _units_to_text(units) -> str:
+        """Flatten translation units into the searchable plain-text projection."""
+        return "\n\n".join(unit.translated_text for unit in units)
