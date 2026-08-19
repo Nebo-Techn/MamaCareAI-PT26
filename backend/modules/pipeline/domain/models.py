@@ -25,7 +25,7 @@ TODO (junior dev):
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .enums import (
     JobStatus,
@@ -45,7 +45,7 @@ def utc_now() -> datetime:
 
     TODO: tests should inject a fixed clock rather than patching this globally.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +78,7 @@ class Resource:
     # Free-form provenance from the source platform (title, author, publisher...).
     source_metadata: dict[str, object] = field(default_factory=dict)
 
-    def with_status(self, status: ResourceStatus, **changes: object) -> "Resource":
+    def with_status(self, status: ResourceStatus, **changes: object) -> Resource:
         """Return a copy in a new status, stamping `updated_at`.
 
         Use this instead of mutating. It keeps the audit trail honest and makes

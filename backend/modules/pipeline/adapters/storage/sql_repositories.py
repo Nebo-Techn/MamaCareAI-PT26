@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from sqlalchemy import (
     Column,
     DateTime,
@@ -16,7 +14,6 @@ from sqlalchemy.orm import DeclarativeBase
 class Base(DeclarativeBase):
     """Base model for pipeline storage."""
 
-    pass
 
 
 class ResourceModel(Base):

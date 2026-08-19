@@ -29,7 +29,6 @@ extractors and assert the right one is chosen, including the fallback order.
 from __future__ import annotations
 
 from .domain.enums import SourceType
-from .domain.errors import UnsupportedSourceType
 from .ports.extractor import ContentExtractor
 from .ports.fetcher import SourceFetcher
 
