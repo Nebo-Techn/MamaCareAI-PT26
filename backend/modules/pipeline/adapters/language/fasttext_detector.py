@@ -1,10 +1,6 @@
-"""
-fastText language detector (PDF 3.3: "fastText lid.176").
-"""
+"""fastText language detector adapter."""
 
 from __future__ import annotations
-
-import re
 
 from ...ports.language_detector import DetectionResult, LanguageDetector
 
@@ -18,20 +14,11 @@ class FastTextDetector(LanguageDetector):
         self._top_k = top_k
 
     def detect(self, text: str) -> DetectionResult:
-        """Detect the language of `text`."""
+        """Detect the language of text."""
         if not text or not text.strip():
             return DetectionResult(language="und", confidence=0.0, alternatives=[])
 
-        # Clean noise: strip URLs, emails, and digit runs
-        cleaned = re.sub(r"https?://\S+|www\.\S+", "", text)
-        cleaned = re.sub(r"\S+@\S+\.\S+", "", cleaned)
-        cleaned = re.sub(r"\b\d+\b", "", cleaned)
-
-        # Replace newlines with spaces
-        cleaned = cleaned.replace("\r", " ").replace("\n", " ")
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
-        # Truncate text
+        cleaned = text.replace("\r", " ").replace("\n", " ").strip()
         cleaned = cleaned[: self._max_chars]
 
         if len(cleaned) < 50:
