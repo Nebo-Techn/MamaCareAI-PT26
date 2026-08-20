@@ -1,4 +1,140 @@
+""""
+fastText-based language detector — PIPE-19.
+
+ASSUMPTIONS (verify against the real `ports/language.py` / domain models
+before merging — these are educated guesses, not confirmed contracts):
+
+- A port interface named `LanguageDetector` exists with a `detect(text: str)`
+  method that returns something exposing `.language` (ISO 639-1/2 code, e.g.
+  "sw", "en") and `.confidence` (float 0.0-1.0), matching the
+  `detected_language` / `language_confidence` fields already present on the
+  `Resource` domain model in sql_repositories.py.
+- fastText's pretrained language-identification model is used
+  (https://fasttext.cc/docs/en/language-identification.html), loaded from a
+  local path rather than downloaded at runtime (matches the "free stack,
+  local-first" pattern used elsewhere in this pipeline — see NLLB-200 and
+  sentence-transformers in ARCHITECTURE.md).
+- `fasttext` (pip package `fasttext-wheel` or `fasttext`) is an approved
+  dependency — not yet confirmed in requirements.txt.
+
+If the real port differs (different method name, different result shape,
+different confidence threshold behavior), this file needs to be adjusted to
+match it exactly — do not merge without checking.
 """
+
+from __future__ import annotations
+
+import logging
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# fastText's pretrained label format is "__label__<iso-code>"
+_FASTTEXT_LABEL_PREFIX = "__label__"
+
+# Below this confidence, treat the detection as unreliable rather than
+# confidently wrong — callers (e.g. the detect_language stage) can decide
+# whether to route low-confidence resources to manual review.
+DEFAULT_MIN_CONFIDENCE = 0.5
+
+
+class LanguageDetectionError(Exception):
+    """Raised when detection cannot be performed (empty text, model load failure)."""
+
+
+@dataclass(frozen=True)
+class DetectionResult:
+    """Result of a language detection call."""
+
+    language: str      # ISO 639-1/2 code, e.g. "sw", "en", "fr"
+    confidence: float  # 0.0-1.0
+    is_reliable: bool  # confidence >= configured threshold
+
+
+class FastTextLanguageDetector:
+    """
+    Language detector backed by fastText's pretrained lid.176 model.
+
+    Loads the model once (lazily, thread-safely) and reuses it across calls —
+    fastText model load is expensive (seconds), detection itself is fast
+    (sub-millisecond), so a single shared instance should back the whole
+    pipeline process rather than being re-instantiated per resource.
+    """
+
+    def __init__(
+        self,
+        model_path: str | Path,
+        *,
+        min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+    ) -> None:
+        self._model_path = Path(model_path)
+        self._min_confidence = min_confidence
+        self._model = None
+        self._load_lock = threading.Lock()
+
+        if not self._model_path.exists():
+            raise LanguageDetectionError(
+                f"fastText model not found at '{self._model_path}'. "
+                f"Download lid.176.bin (or the smaller lid.176.ftz) from "
+                f"https://fasttext.cc/docs/en/language-identification.html "
+                f"and set the path via config, not by downloading at runtime."
+            )
+
+    def _ensure_loaded(self):
+        if self._model is not None:
+            return self._model
+
+        with self._load_lock:
+            if self._model is not None:
+                return self._model
+            try:
+                import fasttext
+            except ImportError as e:
+                raise LanguageDetectionError(
+                    "fasttext package is not installed. "
+                    "Add 'fasttext-wheel' (or 'fasttext') to requirements.txt."
+                ) from e
+
+            logger.info("Loading fastText language model from %s", self._model_path)
+            self._model = fasttext.load_model(str(self._model_path))
+            return self._model
+
+    def detect(self, text: str) -> DetectionResult:
+        """
+        Detect the primary language of `text`.
+
+        Raises LanguageDetectionError for empty/whitespace-only input rather
+        than silently returning a meaningless guess.
+        """
+        if text is None or not text.strip():
+            raise LanguageDetectionError("Cannot detect language of empty text.")
+
+        model = self._ensure_loaded()
+
+        # fastText chokes on embedded newlines; it expects single-line input.
+        cleaned = " ".join(text.strip().split())
+
+        labels, probabilities = model.predict(cleaned, k=1)
+
+        if not labels:
+            raise LanguageDetectionError("fastText returned no prediction.")
+
+        raw_label = labels[0]
+        confidence = float(probabilities[0])
+        language = raw_label.removeprefix(_FASTTEXT_LABEL_PREFIX)
+
+        return DetectionResult(
+            language=language,
+            confidence=confidence,
+            is_reliable=confidence >= self._min_confidence,
+        )
+
+    def detect_batch(self, texts: list[str]) -> list[DetectionResult]:
+        """Convenience batch wrapper. Order is preserved; empty strings raise."""
+        return [self.detect(t) for t in texts]
+"
 fastText language detector (PDF 3.3: "fastText lid.176").
 
 Model: lid.176.bin (~130MB) or lid.176.ftz (~900KB, quantized, slightly less
