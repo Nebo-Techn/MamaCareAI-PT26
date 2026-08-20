@@ -27,7 +27,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 
-from backend.modules.pipeline.domain.enums import ResourceStatus
+from backend.modules.pipeline.domain.enums import JobStatus, ResourceStatus
 from backend.modules.pipeline.domain.errors import (
     InvalidStateTransition,
     PipelineError,
