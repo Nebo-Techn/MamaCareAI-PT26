@@ -1,32 +1,9 @@
-"""
-Composition root — the ONE place that knows which adapter fills which port.
-
-THIS IS THE MOST IMPORTANT FILE FOR UNDERSTANDING THE DESIGN.
-
-Every other file in this package depends on abstractions. This file, and only
-this file, imports concrete classes (S3ObjectStore, NLLBTranslator, ...) and
-wires them together. Dependency Inversion has to be resolved SOMEWHERE — the
-discipline is keeping that somewhere to a single file at the edge of the
-system, instead of scattering `S3Client()` calls through twelve modules.
-
-WHAT THIS BUYS THE TEAM, CONCRETELY
-  - Run the whole pipeline locally, free, with zero cloud accounts:
-    filesystem + SQLite + in-memory queue.
-  - Run it in production on S3 + Postgres + SQS by changing environment
-    variables — no code change in any stage.
-  - Run it in tests with fakes, by calling `build_test_container()`.
-  Same stages in all three. That is the payoff for the ports/adapters layout.
-
-RULE: no business logic here. If you are writing an `if` about a resource's
-status in this file, it belongs in a stage.
-
-TODO (junior dev): implement the factory functions below. Keep each one boring —
-read a config value, construct one adapter, return it. Boring is correct here.
-"""
-
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol, cast
 
 from .config import PipelineSettings
 from .ports.deduplicator import Deduplicator
@@ -47,8 +24,6 @@ from .stages.base import Stage
 
 @dataclass(slots=True)
 class Container:
-    """Every wired dependency the pipeline needs. Built once at startup."""
-
     settings: PipelineSettings
     queue: JobQueue
     object_store: ObjectStore
@@ -64,115 +39,311 @@ class Container:
     reviews: ReviewRepository
 
     def stage(self, name: str) -> Stage:
-        """Build the stage with the given name, fully wired.
+        from .adapters.translation.chunker import Chunker
+        from .services.compliance import ComplianceGate
+        from .services.review_service import ReviewService
+        from .stages.detect_language import DetectLanguageStage
+        from .stages.extract import ExtractStage
+        from .stages.ingest import IngestStage
+        from .stages.publish import PublishStage
+        from .stages.review import ReviewStage
+        from .stages.store import StoreStage
+        from .stages.translate import TranslateStage
 
-        TODO: map "ingest" -> IngestStage(...), etc. Raise a clear error for an
-        unknown name, listing the valid ones — a typo in a worker command
-        should fail in one second with a useful message, not start a worker
-        that silently consumes nothing.
-        """
-        raise NotImplementedError
-
-
-# --- Factories: config value in, adapter out ---------------------------------
-#
-# Each factory is the ONLY place its adapter is constructed. When someone asks
-# "where does the pipeline decide to use S3?", the answer is one function.
+        common = {
+            "resources": self.resources,
+            "queue": self.queue,
+            "reviews": self.reviews,
+            "max_attempts": self.settings.max_attempts,
+        }
+        review_service = ReviewService(
+            resources=self.resources,
+            reviews=self.reviews,
+            versions=self.versions,
+            documents=self.documents,
+            queue=self.queue,
+        )
+        stages = {
+            "ingest": lambda: IngestStage(**common, fetchers=self.fetchers, object_store=self.object_store, deduplicator=self.deduplicator),
+            "extract": lambda: ExtractStage(**common, documents=self.documents, extractors=self.extractors, object_store=self.object_store),
+            "detect_language": lambda: DetectLanguageStage(**common, documents=self.documents, detector=self.detector, confidence_threshold=self.settings.language_confidence_threshold, target_language=self.settings.target_language),
+            "translate": lambda: TranslateStage(**common, documents=self.documents, versions=self.versions, translator=self.translator, chunker=Chunker(max_chars=self.settings.translation_max_chunk_chars), target_language=self.settings.target_language),
+            "store": lambda: StoreStage(**common, documents=self.documents, versions=self.versions, search=self.search, review_service=review_service),
+            "review": lambda: ReviewStage(**common),
+            "publish": lambda: PublishStage(
+                **common,
+                versions=self.versions,
+                search=self.search,
+                compliance_gate=ComplianceGate(
+                    strict=self.settings.compliance_strict,
+                    allowed_licenses=frozenset(
+                        license_id.strip()
+                        for license_id in self.settings.allowed_licenses.split(",")
+                        if license_id.strip()
+                    ),
+                ),
+            ),
+        }
+        try:
+            return stages[name]()
+        except KeyError as exc:
+            valid = ", ".join(stages)
+            raise ValueError(f"Unknown pipeline stage {name!r}. Valid stages: {valid}") from exc
 
 def build_queue(settings: PipelineSettings) -> JobQueue:
-    """memory | sqs | kafka.
-
-    TODO: default "memory" must work with zero setup — a trainee cloning this
-    repo should be able to run the pipeline end to end on their laptop within
-    ten minutes. If the free path needs an AWS account, we have failed the
-    "no budget provisioned" constraint in docs/ARCHITECTURE.md.
-    """
-    raise NotImplementedError
+    if settings.queue_backend == "memory":
+        from .adapters.queue.memory_queue import MemoryQueue
+        return MemoryQueue()
+    if settings.queue_backend == "sqs":
+        from .adapters.queue.sqs_queue import SqsQueue
+        queue_urls = {
+            stage: url for stage in ("ingest", "extract", "detect_language", "translate", "store", "review", "publish")
+            if (url := os.getenv(f"PIPELINE_SQS_{stage.upper()}_QUEUE_URL"))
+        }
+        dead_letter_url = os.getenv("PIPELINE_SQS_DEAD_LETTER_URL")
+        region = os.getenv("PIPELINE_AWS_REGION")
+        if len(queue_urls) != 7 or not dead_letter_url or not region:
+            raise ValueError("SQS requires PIPELINE_AWS_REGION, PIPELINE_SQS_DEAD_LETTER_URL, and one PIPELINE_SQS_<STAGE>_QUEUE_URL per stage")
+        return SqsQueue(queue_urls=queue_urls, dead_letter_url=dead_letter_url, region=region)
+    raise ValueError(f"Unsupported queue backend: {settings.queue_backend!r}. Supported: memory, sqs")
 
 
 def build_object_store(settings: PipelineSettings) -> ObjectStore:
-    """filesystem | s3."""
-    raise NotImplementedError
+    if settings.object_store_backend == "filesystem":
+        from .adapters.storage.filesystem_object_store import FilesystemObjectStore
+        return FilesystemObjectStore(root=Path(settings.object_store_path))
+    if settings.object_store_backend == "s3":
+        from .adapters.storage.s3_object_store import S3ObjectStore
+        bucket = os.getenv("PIPELINE_S3_BUCKET")
+        if not bucket:
+            raise ValueError("S3 object storage requires PIPELINE_S3_BUCKET")
+        return S3ObjectStore(bucket=bucket, region=os.getenv("PIPELINE_AWS_REGION"), endpoint_url=os.getenv("PIPELINE_S3_ENDPOINT_URL"), prefix=os.getenv("PIPELINE_S3_PREFIX", ""))
+    raise ValueError(f"Unsupported object store backend: {settings.object_store_backend!r}. Supported: filesystem, s3")
 
 
 def build_search_index(settings: PipelineSettings) -> SearchIndex:
-    """sqlite (FTS5) | opensearch."""
-    raise NotImplementedError
+    if settings.search_backend == "sqlite":
+        from .adapters.storage.sqlite_search_index import SqliteSearchIndex
+        database_path = settings.database_url.removeprefix("sqlite:///")
+        return SqliteSearchIndex(database_path=database_path)
+    if settings.search_backend == "opensearch":
+        from .adapters.storage.opensearch_index import OpenSearchIndex
+        hosts = [host.strip() for host in os.getenv("PIPELINE_OPENSEARCH_HOSTS", "").split(",") if host.strip()]
+        if not hosts:
+            raise ValueError("OpenSearch requires PIPELINE_OPENSEARCH_HOSTS")
+        return OpenSearchIndex(hosts=hosts, index_name=os.getenv("PIPELINE_OPENSEARCH_INDEX", "mamacare-resources"), username=os.getenv("PIPELINE_OPENSEARCH_USERNAME"), password=os.getenv("PIPELINE_OPENSEARCH_PASSWORD"))
+    raise ValueError(f"Unsupported search backend: {settings.search_backend!r}. Supported: sqlite, opensearch")
 
 
 def build_translator(settings: PipelineSettings) -> Translator:
-    """nllb | google | aws | azure — PDF section 6's open question, as config.
-
-    TODO: fail fast and loudly at STARTUP if the selected engine's credentials
-    or model files are missing. Discovering a missing API key on the first
-    translation job, after the queue has already accepted 500 documents, is a
-    much worse afternoon than discovering it at boot.
-    """
-    raise NotImplementedError
+    if settings.translation_engine == "nllb":
+        from .adapters.translation.nllb_translator import NllbTranslator
+        return NllbTranslator(batch_size=settings.translation_batch_size)
+    if settings.translation_engine in {"google", "aws", "azure"}:
+        from .adapters.translation.cloud_translator import CloudTranslator
+        api_key = os.getenv("PIPELINE_TRANSLATION_API_KEY")
+        if not api_key:
+            raise ValueError(f"{settings.translation_engine} translation requires PIPELINE_TRANSLATION_API_KEY")
+        return CloudTranslator(provider=settings.translation_engine, api_key=api_key, region=os.getenv("PIPELINE_AWS_REGION"), batch_size=settings.translation_batch_size)
+    raise ValueError(f"Unsupported translation engine: {settings.translation_engine!r}. Supported: nllb, google, aws, azure")
 
 
 def build_detector(settings: PipelineSettings) -> LanguageDetector:
-    """fasttext | cloud.
-
-    TODO: load the fastText lid.176 model ONCE here and share it. Loading a
-    model per job is the classic way to make a cheap stage expensive.
-    """
-    raise NotImplementedError
+    if settings.language_detector == "fasttext":
+        from .adapters.language.fasttext_detector import FastTextDetector
+        return FastTextDetector(model_path=os.getenv("PIPELINE_FASTTEXT_MODEL_PATH", "./models/lid.176.bin"))
+    raise ValueError(f"Unsupported language detector: {settings.language_detector!r}. Supported: fasttext")
 
 
 def build_fetchers(settings: PipelineSettings) -> FetcherRegistry:
-    """Register the web, video, and PDF fetchers.
+    from .adapters.fetchers.pdf_fetcher import PdfFetcher
+    from .adapters.fetchers.video_fetcher import VideoFetcher
+    from .adapters.fetchers.web_fetcher import WebFetcher
 
-    TODO: this is the ONE place a new source type gets plugged in. If adding a
-    source type requires editing anything in `stages/`, the Open/Closed
-    Principle has been broken — fix the design, not the symptom.
-    """
-    raise NotImplementedError
+    registry = FetcherRegistry()
+    registry.register(WebFetcher(timeout_seconds=settings.fetch_timeout_seconds, max_bytes=settings.fetch_max_bytes, user_agent=settings.user_agent, respect_robots=settings.respect_robots_txt))
+    registry.register(PdfFetcher(timeout_seconds=settings.fetch_timeout_seconds, max_bytes=settings.fetch_max_bytes, user_agent=settings.user_agent))
+    registry.register(VideoFetcher(timeout_seconds=settings.fetch_timeout_seconds, max_bytes=settings.fetch_max_bytes))
+    return registry
 
 
 def build_extractors(settings: PipelineSettings) -> ExtractorRegistry:
-    """Register extractors WITH PRIORITIES — this is the fallback chain.
+    from .adapters.extractors.asr_extractor import AsrExtractor
+    from .adapters.extractors.caption_extractor import CaptionExtractor
+    from .adapters.extractors.html_extractor import HtmlExtractor
+    from .adapters.extractors.pdf_ocr_extractor import PdfOcrExtractor
+    from .adapters.extractors.pdf_text_extractor import PdfTextExtractor
 
-    TODO, and the priorities matter:
-        html            priority 100
-        pdf_text_layer  priority 100
-        pdf_ocr         priority  50   <- only when the text layer declines
-        video_captions  priority 100
-        video_asr       priority  50   <- only when there are no captions;
-                                          the most expensive step in the pipeline
-    Get these numbers wrong and you will run OCR on every text-layer PDF and
-    wonder why the bill and the latency are both terrible.
-    """
-    raise NotImplementedError
+    registry = ExtractorRegistry()
+    registry.register(HtmlExtractor(), priority=100)
+    registry.register(PdfTextExtractor(), priority=100)
+    registry.register(PdfOcrExtractor(), priority=50)
+    registry.register(CaptionExtractor(), priority=100)
+    registry.register(AsrExtractor(), priority=50)
+    return registry
 
 
 def build_container(settings: PipelineSettings | None = None) -> Container:
-    """Build the production container from environment settings.
-
-    TODO: call each factory once and return a Container. Called by
-    `worker.py`, `cli.py`, and the FastAPI lifespan hook in `backend/main.py`.
-    Build it ONCE per process — rebuilding per request reloads models and
-    reopens connection pools.
-    """
-    raise NotImplementedError
+    raise RuntimeError(
+        "Production container cannot be built until the SQL repository adapter "
+        "and its SQLAlchemy session factory are implemented. Use "
+        "build_test_container() for local and test execution."
+    )
 
 
 def build_test_container(**overrides: object) -> Container:
-    """Build a container of in-memory fakes for tests.
+    import hashlib
 
-    TODO: wire the fakes from `tests/pipeline/fakes.py` — in-memory
-    repositories, a list-backed queue, a dict-backed object store, a translator
-    that returns "[sw] " + text, a detector that returns a fixed language.
-    Let `**overrides` replace any single dependency, so a test can inject one
-    failing adapter and leave the rest real.
+    from .domain.models import ContentVersion
+    from .ports.language_detector import DetectionResult
+    from .ports.search_index import IndexedResource, SearchHit
+    from .ports.translator import TranslatedChunk
 
-    THIS FUNCTION IS WHY THE WHOLE PORTS LAYER EXISTS. Every stage test should
-    be able to start with one line:
+    class ResourceRecord(Protocol):
+        resource_id: str
+        content_hash: str
+        status: object
 
-        container = build_test_container()
+    class DocumentRecord(Protocol):
+        resource_id: str
 
-    and run the full pipeline with no network, no database, no API keys, and no
-    model downloads — in milliseconds. If a test needs credentials, something
-    has been wired wrongly; find the concrete import that leaked into a stage.
-    """
-    raise NotImplementedError
+    class JobRecord(Protocol):
+        stage: str
+
+    class Resources:
+        def __init__(self) -> None:
+            self.items: dict[str, ResourceRecord] = {}
+        def add(self, resource: ResourceRecord) -> None:
+            self.items[resource.resource_id] = resource
+        def get(self, resource_id: str) -> ResourceRecord: return self.items[resource_id]
+        def find_by_content_hash(self, content_hash: str) -> ResourceRecord | None:
+            return next(
+                (
+                    resource
+                    for resource in self.items.values()
+                    if resource.content_hash == content_hash
+                ),
+                None,
+            )
+        def save(self, resource: ResourceRecord) -> None:
+            self.items[resource.resource_id] = resource
+        def list_by_status(self, status: object, *, limit: int = 100, offset: int = 0) -> list[ResourceRecord]:
+            return [
+                resource
+                for resource in self.items.values()
+                if resource.status == status
+            ][offset:offset + limit]
+
+    class Documents:
+        def __init__(self) -> None: self.items: dict[str, DocumentRecord] = {}
+        def save_document(self, document: DocumentRecord) -> None:
+            self.items[document.resource_id] = document
+        def get_document(self, resource_id: str) -> DocumentRecord: return self.items[resource_id]
+
+    class Versions:
+        def __init__(self) -> None: self.items: dict[str, list[ContentVersion]] = {}
+        def save_version(self, version: ContentVersion) -> None:
+            self.items.setdefault(version.resource_id, []).append(version)
+        def get_latest(self, resource_id: str) -> ContentVersion | None:
+            versions = self.items.get(resource_id, [])
+            return versions[-1] if versions else None
+        def get_machine_version(self, resource_id: str) -> ContentVersion | None:
+            return next((v for v in self.items.get(resource_id, []) if str(v.author_kind).lower().endswith("machine")), None)
+        def list_versions(self, resource_id: str) -> list[ContentVersion]: return list(self.items.get(resource_id, []))
+
+    class Reviews:
+        def __init__(self) -> None: self.audit: list[object] = []
+        def append_audit(self, event: object) -> None: self.audit.append(event)
+
+    class TestQueue:
+        def __init__(self) -> None:
+            self.queues: dict[str, list[JobRecord]] = {}
+            self.dead_letter: list[tuple[JobRecord, str]] = []
+        def publish(self, job: JobRecord) -> None:
+            self.queues.setdefault(job.stage, []).append(job)
+        def depth(self, stage: str) -> int: return len(self.queues.get(stage, []))
+        def send_to_dead_letter(self, job: JobRecord, *, reason: str) -> None:
+            self.dead_letter.append((job, reason))
+
+    class TestObjectStore:
+        def __init__(self) -> None: self.items: dict[str, bytes] = {}
+        def put(self, key: str, content: bytes, *, content_type: str) -> str:
+            self.items[key] = content
+            return key
+        def get(self, key: str) -> bytes: return self.items[key]
+        def exists(self, key: str) -> bool: return key in self.items
+
+    class TestSearch:
+        def __init__(self) -> None: self.items: dict[str, IndexedResource] = {}
+        def index(self, resource: IndexedResource) -> None: self.items[resource.resource_id] = resource
+        def search(self, query: str, *, limit: int = 20, offset: int = 0) -> list[SearchHit]:
+            needle = query.lower()
+            matches = [
+                SearchHit(resource_id=item.resource_id, title=item.title, snippet=item.translated_text, score=1.0)
+                for item in self.items.values()
+                if needle in item.translated_text.lower() or (item.title and needle in item.title.lower())
+            ]
+            return matches[offset:offset + limit]
+        def remove(self, resource_id: str) -> None: self.items.pop(resource_id, None)
+
+    class TestDeduplicator:
+        def __init__(self, resources: Resources) -> None: self.resources = resources
+        def compute_hash(self, *, source_url: str, content: bytes | str) -> str:
+            raw = content if isinstance(content, bytes) else content.encode()
+            return hashlib.sha256(source_url.encode() + b"\0" + raw).hexdigest()
+        def is_duplicate(self, content_hash: str) -> bool:
+            return self.resources.find_by_content_hash(content_hash) is not None
+
+    class TestDetector:
+        def __init__(self, language: str = "en", confidence: float = 0.99) -> None:
+            self.language, self.confidence = language, confidence
+        def detect(self, text: str) -> DetectionResult:
+            return DetectionResult(self.language, self.confidence)
+
+    class TestTranslator:
+        engine_name = "test-translator"
+        def supports(self, source_language: str, target_language: str) -> bool: return True
+        def translate_batch(self, texts: list[str], *, source_language: str, target_language: str = "sw") -> list[TranslatedChunk]:
+            return [TranslatedChunk(f"[sw] {text}") for text in texts]
+
+    detector: object = TestDetector()
+    translator: object = TestTranslator()
+    if overrides.get("detector") == "low_confidence": detector = TestDetector("en", 0.5)
+    elif overrides.get("detector") == "swahili": detector = TestDetector("sw")
+    elif overrides.get("detector") == "english": detector = TestDetector("en")
+    if overrides.get("translator") == "mismatched":
+        class MismatchedTranslator(TestTranslator):
+            def translate_batch(self, texts: list[str], *, source_language: str, target_language: str = "sw") -> list[TranslatedChunk]:
+                return super().translate_batch(texts[:-1], source_language=source_language, target_language=target_language)
+        translator = MismatchedTranslator()
+
+    resources = Resources()
+    dependencies: dict[str, object] = {
+        "settings": PipelineSettings(), "queue": TestQueue(),
+        "object_store": TestObjectStore(), "search": TestSearch(),
+        "deduplicator": TestDeduplicator(resources),
+        "detector": detector, "translator": translator,
+        "fetchers": FetcherRegistry(), "extractors": ExtractorRegistry(),
+        "resources": resources, "documents": Documents(), "versions": Versions(), "reviews": Reviews(),
+    }
+    unknown = set(overrides) - set(dependencies)
+    if unknown:
+        raise ValueError(f"Unknown test-container override(s): {', '.join(sorted(unknown))}")
+    dependencies.update(overrides)
+    dependencies["detector"] = detector if isinstance(dependencies["detector"], str) else dependencies["detector"]
+    dependencies["translator"] = translator if isinstance(dependencies["translator"], str) else dependencies["translator"]
+    return Container(
+        settings=cast(PipelineSettings, dependencies["settings"]),
+        queue=cast(JobQueue, dependencies["queue"]),
+        object_store=cast(ObjectStore, dependencies["object_store"]),
+        search=cast(SearchIndex, dependencies["search"]),
+        deduplicator=cast(Deduplicator, dependencies["deduplicator"]),
+        detector=cast(LanguageDetector, dependencies["detector"]),
+        translator=cast(Translator, dependencies["translator"]),
+        fetchers=cast(FetcherRegistry, dependencies["fetchers"]),
+        extractors=cast(ExtractorRegistry, dependencies["extractors"]),
+        resources=cast(ResourceRepository, dependencies["resources"]),
+        documents=cast(DocumentRepository, dependencies["documents"]),
+        versions=cast(VersionRepository, dependencies["versions"]),
+        reviews=cast(ReviewRepository, dependencies["reviews"]),
+    )

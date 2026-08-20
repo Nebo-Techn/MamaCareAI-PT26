@@ -95,7 +95,7 @@ def can_transition(current: ResourceStatus, target: ResourceStatus) -> bool:
     Treat an unknown `current` as "no transitions allowed" rather than raising —
     callers use this for questions, and `assert_can_transition` for enforcement.
     """
-    raise NotImplementedError
+    return target in ALLOWED_TRANSITIONS.get(current, frozenset())
 
 
 def assert_can_transition(current: ResourceStatus, target: ResourceStatus) -> None:
@@ -108,4 +108,11 @@ def assert_can_transition(current: ResourceStatus, target: ResourceStatus) -> No
     "cannot go approved -> in_review (allowed: published, blocked_licensing)"
     is a message an on-call engineer can act on at 2am. "invalid transition" is not.
     """
-    raise NotImplementedError
+    if can_transition(current, target):
+        return
+
+    allowed = ALLOWED_TRANSITIONS.get(current, frozenset())
+    alternatives = ", ".join(sorted(status.value for status in allowed)) or "none"
+    raise InvalidStateTransition(
+        f"cannot go {current.value} -> {target.value} (allowed: {alternatives})"
+    )
