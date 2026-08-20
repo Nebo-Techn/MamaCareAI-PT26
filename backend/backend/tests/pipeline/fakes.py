@@ -67,24 +67,15 @@ from __future__ import annotations
 #       constructs a 12-field Resource by hand, and adding a field to the model
 #       means editing forty tests. With them, it means editing one function.
 # ---------------------------------------------------------------------------
-import random
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from backend.modules.pipeline.domain.enums import (
-    JobStatus,
     ResourceStatus,
-    ReviewDecision,
     SourceType,
-    VersionAuthorKind,
 )
 from backend.modules.pipeline.domain.errors import (
-    ExtractionError,
     FetchError,
-    InvalidStateTransition,
-    LanguageDetectionUncertain,
-    UnsupportedSourceType,
 )
 from backend.modules.pipeline.domain.models import (
     AuditEvent,
@@ -94,13 +85,14 @@ from backend.modules.pipeline.domain.models import (
     Resource,
     ReviewAssignment,
     TextBlock,
-    TranslationUnit,
 )
 from backend.modules.pipeline.ports.deduplicator import Deduplicator
 from backend.modules.pipeline.ports.extractor import ContentExtractor
 from backend.modules.pipeline.ports.fetcher import FetchResult, SourceFetcher
 from backend.modules.pipeline.ports.job_queue import JobQueue
-from backend.modules.pipeline.ports.language_detector import DetectionResult, LanguageDetector
+from backend.modules.pipeline.ports.language_detector import (
+    LanguageDetector,
+)
 from backend.modules.pipeline.ports.object_store import ObjectStore
 from backend.modules.pipeline.ports.repositories import (
     DocumentRepository,
@@ -297,7 +289,7 @@ class FakeSearchIndex(SearchIndex):
         results = []
         query_lower = query.lower()
 
-        for resource_id, data in self._index.items():
+        for data in self._index.values():
             if query_lower in data["text"].lower() or query_lower in data["title"].lower():
                 results.append(data)
                 if len(results) >= limit:

@@ -5,9 +5,6 @@ Tests for sql_repositories.py using in-memory SQLite.
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from modules.pipeline.adapters.storage.sql_repositories import (
     AssignmentNotFoundError,
     AuditEvent,
@@ -30,6 +27,8 @@ from modules.pipeline.adapters.storage.sql_repositories import (
     TranslationUnit,
     UnauthorizedAssignmentAccessError,
 )
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 
 @pytest.fixture
