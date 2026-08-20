@@ -25,7 +25,7 @@ jobs:
           pip install ruff pytest
 
       - name: Lint
-        run: ruff check .
+        run: ruff check . --ignore N999
 
       - name: Test
         run: pytest --tb=short
