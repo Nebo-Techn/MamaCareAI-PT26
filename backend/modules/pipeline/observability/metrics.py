@@ -35,8 +35,8 @@ Per-document detail belongs in logs, not metrics.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 
 class Metrics(ABC):

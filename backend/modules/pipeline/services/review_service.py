@@ -22,7 +22,7 @@ reviewing line by line before each presentation, alongside `modules/safety`.
 
 from __future__ import annotations
 
-from ..domain.enums import ResourceStatus, ReviewDecision
+from ..domain.enums import ReviewDecision
 from ..domain.models import ContentVersion, Resource, ReviewAssignment, TranslationUnit
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import (

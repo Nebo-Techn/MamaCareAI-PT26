@@ -18,7 +18,11 @@ from ..domain.enums import ResourceStatus
 from ..domain.models import Resource
 from ..ports.job_queue import JobQueue
 from ..ports.object_store import ObjectStore
-from ..ports.repositories import DocumentRepository, ResourceRepository, ReviewRepository
+from ..ports.repositories import (
+    DocumentRepository,
+    ResourceRepository,
+    ReviewRepository,
+)
 from ..registry import ExtractorRegistry
 from .base import Stage, StageResult
 

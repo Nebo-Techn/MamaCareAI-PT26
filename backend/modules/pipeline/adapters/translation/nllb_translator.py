@@ -27,6 +27,8 @@ see an NLLB-specific code — that is what keeps the port swappable.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from ...ports.translator import TranslatedChunk, Translator
 
 
@@ -35,7 +37,7 @@ class NllbTranslator(Translator):
 
     # TODO: fill in the ISO -> NLLB (FLORES-200) code map for every source
     # language we actually ingest. Keep it here and nowhere else.
-    LANGUAGE_CODES: dict[str, str] = {
+    LANGUAGE_CODES: ClassVar[dict[str, str]] = {
         "sw": "swh_Latn",
         "en": "eng_Latn",
         "fr": "fra_Latn",
