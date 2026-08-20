@@ -25,8 +25,13 @@ translating anything.
 
 from __future__ import annotations
 
-from ..domain.enums import ResourceStatus
-from ..domain.models import Resource
+from collections import defaultdict
+from statistics import mean
+from uuid import uuid4
+
+from ..domain.enums import ResourceStatus, VersionAuthorKind
+from ..domain.errors import TranslationError
+from ..domain.models import ContentVersion, Resource, TranslationUnit
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import (
     DocumentRepository,
@@ -129,4 +134,67 @@ class TranslateStage(Stage):
         enough to matter, add per-chunk caching keyed by chunk hash so a retry
         only re-translates what is missing. Measure before building that.
         """
-        raise NotImplementedError
+        if self._versions.get_machine_version(resource.resource_id) is not None:
+            return StageResult(
+                next_status=ResourceStatus.TRANSLATED,
+                next_stage="store",
+                details={"chunks": 0, "mean_confidence": None, "idempotent": True},
+            )
+
+        if not resource.detected_language:
+            raise TranslationError("Resource has no detected language")
+        if not self._translator.supports(resource.detected_language, self._target_language):
+            raise TranslationError(
+                f"Translation from {resource.detected_language!r} to {self._target_language!r} is unsupported"
+            )
+
+        document = self._documents.get_document(resource.resource_id)
+        chunks = self._chunker.chunk(document.blocks)
+        translated = self._translator.translate_batch(
+            [chunk.text for chunk in chunks],
+            source_language=resource.detected_language,
+            target_language=self._target_language,
+        )
+        if len(translated) != len(chunks):
+            raise TranslationError(
+                f"Translator returned {len(translated)} results for {len(chunks)} chunks"
+            )
+
+        translated_by_order: dict[int, list[str]] = defaultdict(list)
+        confidence_by_order: dict[int, list[float]] = defaultdict(list)
+        for chunk, result in zip(chunks, translated, strict=True):
+            for order in chunk.block_orders:
+                translated_by_order[order].append(result.text)
+                if result.confidence is not None:
+                    confidence_by_order[order].append(result.confidence)
+
+        units = tuple(
+            TranslationUnit(
+                order=block.order,
+                kind=block.kind,
+                source_text=block.text,
+                translated_text=" ".join(translated_by_order[block.order]),
+                confidence=(mean(confidence_by_order[block.order]) if confidence_by_order[block.order] else None),
+            )
+            for block in document.blocks
+        )
+        self._versions.save_version(
+            ContentVersion(
+                version_id=str(uuid4()),
+                resource_id=resource.resource_id,
+                version_number=1,
+                author_kind=VersionAuthorKind.MACHINE,
+                author_id=None,
+                units=units,
+                engine=self._translator.engine_name,
+            )
+        )
+        confidences = [result.confidence for result in translated if result.confidence is not None]
+        return StageResult(
+            next_status=ResourceStatus.TRANSLATED,
+            next_stage="store",
+            details={
+                "chunks": len(chunks),
+                "mean_confidence": mean(confidences) if confidences else None,
+            },
+        )

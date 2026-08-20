@@ -23,7 +23,11 @@ from ..domain.enums import ResourceStatus
 from ..domain.models import Resource
 from ..ports.job_queue import JobQueue
 from ..ports.language_detector import LanguageDetector
-from ..ports.repositories import DocumentRepository, ResourceRepository, ReviewRepository
+from ..ports.repositories import (
+    DocumentRepository,
+    ResourceRepository,
+    ReviewRepository,
+)
 from .base import Stage, StageResult
 
 
@@ -110,4 +114,28 @@ class DetectLanguageStage(Stage):
         No network, no model download. There is no excuse for this stage being
         untested.
         """
-        raise NotImplementedError
+        if resource.source_metadata.get("language_confirmed_by") and resource.detected_language:
+            language = resource.detected_language
+            return StageResult(
+                next_status=ResourceStatus.LANGUAGE_DETECTED,
+                next_stage="store" if language == self._target_language else "translate",
+                resource_changes={"detected_language": language},
+            )
+
+        document = self._documents.get_document(resource.resource_id)
+        result = self._detector.detect(document.raw_text)
+        changes = {
+            "detected_language": result.language,
+            "language_confidence": result.confidence,
+        }
+        if result.confidence < self._threshold:
+            return StageResult(
+                next_status=ResourceStatus.NEEDS_LANGUAGE_CONFIRMATION,
+                resource_changes=changes,
+                details={"alternatives": result.alternatives},
+            )
+        return StageResult(
+            next_status=ResourceStatus.LANGUAGE_DETECTED,
+            next_stage="store" if result.language == self._target_language else "translate",
+            resource_changes=changes,
+        )
