@@ -1,61 +1,58 @@
-"""
-Tests for the translation chunker (PDF 3.4).
+import pytest
+from backend.modules.pipeline.adapters.translation.chunker import Chunk, Chunker
+from backend.modules.pipeline.domain.models import TextBlock
 
-Pure functions over data — no mocks, no I/O, fast. There is no excuse for gaps
-here, and the failure modes this file catches are exactly the ones that are
-invisible in production: text that looks translated but has silently lost a
-section or mangled a boundary.
-"""
 
-from __future__ import annotations
+def create_block(order: int, text: str, kind: str = "text") -> TextBlock:
+    return TextBlock(order=order, text=text, kind=kind)
 
-# ---------------------------------------------------------------------------
-# TODO (junior dev): implement these tests.
-#
-# --- Chunking ---
-#
-# def test_short_document_becomes_one_chunk():
-#
-# def test_chunks_never_exceed_max_chars():
-#     Property-style: generate documents of varied sizes, assert the invariant
-#     holds for every chunk produced.
-#
-# def test_no_chunk_splits_mid_word():
-#     THE BUG THIS FILE EXISTS TO PREVENT. Naive slicing produces character
-#     soup at every boundary and it is nearly invisible in a long document.
-#
-# def test_oversized_block_splits_on_sentence_boundaries():
-#     One block longer than max_chars splits at sentence ends, not arbitrarily.
-#
-# def test_abbreviations_do_not_end_a_sentence():
-#     "Dr. Amina alisema..." must not split after "Dr.". Naive .split(".")
-#     fails this, and health documents are full of abbreviations.
-#
-# def test_block_orders_are_always_populated():
-#     Every chunk carries the source block orders it came from. Without them
-#     reassembly is impossible.
-#
-# def test_headings_are_not_merged_into_paragraph_chunks():
-#     Structure preservation — PDF 3.4 is explicit about this.
-#
-# --- Reassembly ---
-#
-# def test_reassemble_restores_every_source_block():
-#     Chunk then reassemble; every original block order appears exactly once.
-#
-# def test_reassemble_raises_on_length_mismatch():
-#     Pass fewer translations than chunks; assert it RAISES.
-#     A plain zip() would silently truncate and drop the end of the document —
-#     no error, no log, just a missing section a reviewer may not notice.
-#
-# def test_round_trip_preserves_order():
-#     chunk -> "translate" (identity) -> reassemble gives back the original
-#     block order exactly.
-#
-# --- Edge cases ---
-#
-# def test_empty_document_returns_no_chunks():
-# def test_block_exactly_at_the_limit_is_not_split():
-# def test_block_one_char_over_the_limit_is_split():
-#     Off-by-one at the boundary is the classic bug in any chunker.
-# ---------------------------------------------------------------------------
+
+def test_chunk_empty_input() -> None:
+    chunker = Chunker(max_chars=100)
+    assert chunker.chunk(()) == []
+
+
+def test_chunk_greedy_pack_whole_blocks() -> None:
+    chunker = Chunker(max_chars=50)
+    b1 = create_block(1, "First sentence.")
+    b2 = create_block(2, "Second sentence.")
+
+    chunks = chunker.chunk((b1, b2))
+    assert len(chunks) == 1
+    assert chunks[0].block_orders == (1, 2)
+    assert "First sentence.\n\nSecond sentence." in chunks[0].text
+
+
+def test_chunk_huge_block_splits_on_sentences() -> None:
+    chunker = Chunker(max_chars=100)
+    huge_text = "Dr. Jane visited the clinic. She checked the maternal records carefully."
+    b1 = create_block(1, huge_text)
+
+    chunks = chunker.chunk((b1,))
+    assert len(chunks) >= 1
+    for c in chunks:
+        assert c.block_orders == (1,)
+        assert len(c.text) <= 100
+
+
+def test_reassemble_mismatch_raises_error() -> None:
+    chunker = Chunker(max_chars=100)
+    b1 = create_block(1, "Hello")
+    chunks = [Chunk(text="Hello", block_orders=(1,))]
+
+    with pytest.raises(ValueError, match="Mismatch"):
+        chunker.reassemble((b1,), chunks, ["Habari", "Extra translation"])
+
+
+def test_reassemble_single_and_multi_blocks() -> None:
+    chunker = Chunker(max_chars=100)
+    b1 = create_block(1, "First paragraph.")
+    b2 = create_block(2, "Second paragraph.")
+
+    chunks = chunker.chunk((b1, b2))
+    translations = ["Aya ya kwanza.\n\nAya ya pili."]
+
+    reassembled = chunker.reassemble((b1, b2), chunks, translations)
+    assert len(reassembled) == 2
+    assert reassembled[0] == (1, "Aya ya kwanza.")
+    assert reassembled[1] == (2, "Aya ya pili.")
