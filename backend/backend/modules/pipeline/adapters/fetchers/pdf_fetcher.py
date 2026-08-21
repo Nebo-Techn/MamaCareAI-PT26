@@ -21,7 +21,9 @@ from ...ports.fetcher import FetchResult, SourceFetcher
 class PdfFetcher(SourceFetcher):
     """Downloads a PDF by URL."""
 
-    def __init__(self, *, timeout_seconds: float, max_bytes: int, user_agent: str) -> None:
+    def __init__(
+        self, *, timeout_seconds: float, max_bytes: int, user_agent: str
+    ) -> None:
         self._timeout = timeout_seconds
         self._max_bytes = max_bytes
         self._user_agent = user_agent

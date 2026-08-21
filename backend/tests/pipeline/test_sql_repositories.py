@@ -44,6 +44,7 @@ def session_factory():
 # SqlResourceRepository Tests
 # ---------------------------------------------------------------------------
 
+
 def test_resource_repo_add_and_get(session_factory):
     repo = SqlResourceRepository(session_factory=session_factory)
     now = datetime.now(timezone.utc)
@@ -168,6 +169,7 @@ def test_resource_repo_list_by_status(session_factory):
 # SqlDocumentRepository Tests
 # ---------------------------------------------------------------------------
 
+
 def test_document_repo_save_and_get(session_factory):
     res_repo = SqlResourceRepository(session_factory=session_factory)
     doc_repo = SqlDocumentRepository(session_factory=session_factory)
@@ -210,6 +212,7 @@ def test_document_repo_save_and_get(session_factory):
 # SqlVersionRepository Tests
 # ---------------------------------------------------------------------------
 
+
 def test_version_repo_auto_increments_version_number(session_factory):
     res_repo = SqlResourceRepository(session_factory=session_factory)
     ver_repo = SqlVersionRepository(session_factory=session_factory)
@@ -244,7 +247,9 @@ def test_version_repo_auto_increments_version_number(session_factory):
         author_kind=AuthorKind.HUMAN,
         author_id="human-1",
         created_at=now,
-        units=[TranslationUnit(unit_id="u1", source_text="Hello", target_text="Habari")],
+        units=[
+            TranslationUnit(unit_id="u1", source_text="Hello", target_text="Habari")
+        ],
     )
 
     ver_repo.save_version(v1)
@@ -259,6 +264,7 @@ def test_version_repo_auto_increments_version_number(session_factory):
 # ---------------------------------------------------------------------------
 # SqlReviewRepository Tests
 # ---------------------------------------------------------------------------
+
 
 def test_review_repo_claim_next_and_save(session_factory):
     res_repo = SqlResourceRepository(session_factory=session_factory)

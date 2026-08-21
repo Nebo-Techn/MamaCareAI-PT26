@@ -40,13 +40,13 @@ class PipelineSettings(BaseSettings):
     # --- Adapter selection: the free MVP stack by default --------------------
     # docs/ARCHITECTURE.md: no budget provisioned. Defaults must run on a
     # laptop with no cloud account. Production overrides them via env vars.
-    queue_backend: str = "memory"           # memory | sqs | kafka
+    queue_backend: str = "memory"  # memory | sqs | kafka
     object_store_backend: str = "filesystem"  # filesystem | s3
-    search_backend: str = "sqlite"          # sqlite | opensearch
+    search_backend: str = "sqlite"  # sqlite | opensearch
     database_url: str = "sqlite:///./data/pipeline.db"
 
     # --- Language detection (PDF 3.3) ----------------------------------------
-    language_detector: str = "fasttext"     # fasttext | cloud
+    language_detector: str = "fasttext"  # fasttext | cloud
     # Below this, a human confirms the language instead of the model guessing.
     # Tune from real data: an always-empty confirmation queue means it is too
     # low to be doing anything.
@@ -54,7 +54,7 @@ class PipelineSettings(BaseSettings):
     target_language: str = "sw"
 
     # --- Translation (PDF 3.4, PDF section 6) --------------------------------
-    translation_engine: str = "nllb"        # nllb | google | aws | azure
+    translation_engine: str = "nllb"  # nllb | google | aws | azure
     # Max characters per chunk sent to the MT engine. Provider-dependent —
     # check the actual API limit before changing this.
     translation_max_chunk_chars: int = 4000
@@ -68,8 +68,8 @@ class PipelineSettings(BaseSettings):
     # --- Ingestion limits ----------------------------------------------------
     # Guards against one enormous file taking down a worker.
     fetch_timeout_seconds: float = 30.0
-    fetch_max_bytes: int = 100 * 1024 * 1024   # 100 MB
-    respect_robots_txt: bool = True            # do not set this to False.
+    fetch_max_bytes: int = 100 * 1024 * 1024  # 100 MB
+    respect_robots_txt: bool = True  # do not set this to False.
     user_agent: str = "MamaCareAI-DataPipeline/0.1 (+contact: nebotechtz@gmail.com)"
 
     # --- Extraction quality gate ---------------------------------------------
@@ -80,7 +80,7 @@ class PipelineSettings(BaseSettings):
     object_store_path: str = "./data/02_raw"
 
     # --- Compliance (PDF section 4) ------------------------------------------
-    compliance_strict: bool = True          # unknown licence -> block. Keep True.
+    compliance_strict: bool = True  # unknown licence -> block. Keep True.
     allowed_licenses: str = "public-domain,CC0,CC-BY-4.0,permission-granted"
 
     # --- Observability -------------------------------------------------------

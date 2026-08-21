@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff pytest
+          pip install ruff==0.16.3 pytest
 
       - name: Lint
         run: ruff check . --ignore N999

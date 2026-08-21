@@ -21,7 +21,7 @@ class S3ObjectStore(ObjectStore):
         *,
         bucket: str,
         region: str | None = None,
-        endpoint_url: str | None = None,   # set for MinIO / R2 / B2
+        endpoint_url: str | None = None,  # set for MinIO / R2 / B2
         prefix: str = "",
     ) -> None:
         # TODO: create ONE boto3 client here and reuse it — client creation is
@@ -31,16 +31,16 @@ class S3ObjectStore(ObjectStore):
 
     def put(self, key: str, content: bytes, *, content_type: str) -> str:
         """TODO:
-          [ ] put_object with ContentType set — it matters when a human later
-              opens the object from a browser or a console.
-          [ ] Use multipart upload above ~100MB. Large health-guideline PDFs
-              and audio files will exceed the single-request practical limit.
-          [ ] Enable SERVER-SIDE ENCRYPTION (SSE-S3 at minimum). PDF section 4
-              calls for access control on raw content, and this is the cheapest
-              half of it.
-          [ ] Map ClientError to our types: throttling/5xx -> TransientError,
-              AccessDenied/NoSuchBucket -> PermanentError with a message that
-              names the bucket.
+        [ ] put_object with ContentType set — it matters when a human later
+            opens the object from a browser or a console.
+        [ ] Use multipart upload above ~100MB. Large health-guideline PDFs
+            and audio files will exceed the single-request practical limit.
+        [ ] Enable SERVER-SIDE ENCRYPTION (SSE-S3 at minimum). PDF section 4
+            calls for access control on raw content, and this is the cheapest
+            half of it.
+        [ ] Map ClientError to our types: throttling/5xx -> TransientError,
+            AccessDenied/NoSuchBucket -> PermanentError with a message that
+            names the bucket.
         """
         raise NotImplementedError
 

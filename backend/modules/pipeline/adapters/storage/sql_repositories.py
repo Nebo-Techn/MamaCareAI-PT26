@@ -45,6 +45,7 @@ JsonType = JSON().with_variant(JSONB(), "postgresql")
 # DOMAIN ENUMS
 # ---------------------------------------------------------------------------
 
+
 class AuthorKind(str, Enum):
     MACHINE = "machine"
     HUMAN = "human"
@@ -68,27 +69,39 @@ class ReviewDecision(str, Enum):
 # DOMAIN EXCEPTIONS
 # ---------------------------------------------------------------------------
 
+
 class DomainError(Exception):
     """Base domain exception."""
+
+
 class DuplicateResourceError(DomainError):
     """Raised when trying to add a duplicate resource."""
+
+
 class ResourceNotFoundError(DomainError):
     """Raised when a resource is not found."""
+
+
 class AssignmentNotFoundError(DomainError):
     """Raised when an assignment is not found."""
+
+
 class InvalidStateTransitionError(DomainError):
     """Raised when an invalid state transition is attempted."""
+
+
 class UnauthorizedAssignmentAccessError(DomainError):
     """Raised when trying to access an assignment without authorization."""
-    
 
 
 # ---------------------------------------------------------------------------
 # DOMAIN MODELS
 # ---------------------------------------------------------------------------
 
+
 class Resource:
     """Domain model for a resource."""
+
     def __init__(
         self,
         resource_id: str,
@@ -133,7 +146,7 @@ class TextBlock:
         order: int = 0,
         page: str | None = None,
         bbox: str | None = None,
-        **kwargs
+        **kwargs,
     ):
         self.text = text
         self.block_id = block_id
@@ -144,15 +157,15 @@ class TextBlock:
 
 class NormalizedDocument:
     """Domain model for a normalized document."""
-    
+
     def __init__(
         self,
         resource_id: str,
         blocks: list[TextBlock],
-        title:  str |None  = None,
-        author: str |None = None,
-        published_date:  str |None  = None,
-        source_metadata: str |None  = None,
+        title: str | None = None,
+        author: str | None = None,
+        published_date: str | None = None,
+        source_metadata: str | None = None,
     ):
         self.resource_id = resource_id
         self.title = title
@@ -164,13 +177,13 @@ class NormalizedDocument:
 
 class TranslationUnit:
     """Domain model for a translation unit."""
-    
+
     def __init__(
         self,
         source_text: str,
-        target_text:  str |None = None,
-        unit_id:  str |None  = None,
-        **kwargs
+        target_text: str | None = None,
+        unit_id: str | None = None,
+        **kwargs,
     ):
         self.unit_id = unit_id
         self.source_text = source_text
@@ -179,7 +192,7 @@ class TranslationUnit:
 
 class ContentVersion:
     """Domain model for a content version."""
-    
+
     def __init__(
         self,
         version_id: str,
@@ -189,8 +202,8 @@ class ContentVersion:
         author_id: str,
         created_at: datetime,
         units: list[TranslationUnit],
-        engine:  str |None  = None,
-        note:  str |None  = None,
+        engine: str | None = None,
+        note: str | None = None,
     ):
         self.version_id = version_id
         self.resource_id = resource_id
@@ -205,16 +218,16 @@ class ContentVersion:
 
 class ReviewAssignment:
     """Domain model for a review assignment."""
-    
+
     def __init__(
         self,
         assignment_id: str,
         resource_id: str,
         assigned_at: datetime,
-        reviewer_id: str |None  = None,
-        decision:  str |None  = None,
+        reviewer_id: str | None = None,
+        decision: str | None = None,
         priority: int = 0,
-        completed_at:  str |None  = None,
+        completed_at: str | None = None,
     ):
         self.assignment_id = assignment_id
         self.resource_id = resource_id
@@ -227,7 +240,7 @@ class ReviewAssignment:
 
 class AuditEvent:
     """Domain model for an audit event."""
-    
+
     def __init__(
         self,
         event_id: str,
@@ -236,8 +249,8 @@ class AuditEvent:
         action: str,
         to_status: ResourceStatus,
         at: datetime,
-        from_status:  str |None  = None,
-        details:  str |None  = None,
+        from_status: str | None = None,
+        details: str | None = None,
     ):
         self.event_id = event_id
         self.resource_id = resource_id
@@ -253,29 +266,27 @@ class AuditEvent:
 # PORT INTERFACES
 # ---------------------------------------------------------------------------
 
+
 class ResourceRepository:
     """Interface for resource repository."""
-    
 
 
 class DocumentRepository:
     """Interface for document repository."""
-    
 
 
 class VersionRepository:
     """Interface for version repository."""
-    
 
 
 class ReviewRepository:
     """Interface for review repository."""
-    
 
 
 # ---------------------------------------------------------------------------
 # ORM TABLE DEFINITIONS
 # ---------------------------------------------------------------------------
+
 
 class ResourceORM(Base):
     __tablename__ = "resources"
@@ -295,9 +306,7 @@ class ResourceORM(Base):
     source_metadata = Column(JsonType, nullable=True)
     version = Column(Integer, default=1, nullable=False)
 
-    __table_args__ = (
-        Index("idx_resources_status_updated_at", "status", "updated_at"),
-    )
+    __table_args__ = (Index("idx_resources_status_updated_at", "status", "updated_at"),)
 
 
 class DocumentORM(Base):
@@ -315,7 +324,9 @@ class ContentVersionORM(Base):
     __tablename__ = "content_versions"
 
     version_id = Column(String, primary_key=True)
-    resource_id = Column(String, ForeignKey("resources.resource_id"), nullable=False, index=True)
+    resource_id = Column(
+        String, ForeignKey("resources.resource_id"), nullable=False, index=True
+    )
     version_number = Column(Integer, nullable=False)
     author_kind = Column(String, nullable=False)
     author_id = Column(String, nullable=False)
@@ -325,7 +336,9 @@ class ContentVersionORM(Base):
     units = Column(JsonType, nullable=False)  # List[TranslationUnit]
 
     __table_args__ = (
-        UniqueConstraint("resource_id", "version_number", name="uq_resource_version_number"),
+        UniqueConstraint(
+            "resource_id", "version_number", name="uq_resource_version_number"
+        ),
     )
 
 
@@ -333,7 +346,9 @@ class ReviewAssignmentORM(Base):
     __tablename__ = "review_assignments"
 
     assignment_id = Column(String, primary_key=True)
-    resource_id = Column(String, ForeignKey("resources.resource_id"), nullable=False, index=True)
+    resource_id = Column(
+        String, ForeignKey("resources.resource_id"), nullable=False, index=True
+    )
     reviewer_id = Column(String, nullable=True)
     decision = Column(String, nullable=True)
     priority = Column(Integer, default=0, nullable=False)
@@ -349,7 +364,9 @@ class AuditEventORM(Base):
     __tablename__ = "audit_events"
 
     event_id = Column(String, primary_key=True)
-    resource_id = Column(String, ForeignKey("resources.resource_id"), nullable=False, index=True)
+    resource_id = Column(
+        String, ForeignKey("resources.resource_id"), nullable=False, index=True
+    )
     actor_id = Column(String, nullable=False)
     action = Column(String, nullable=False)
     from_status = Column(String, nullable=True)
@@ -361,6 +378,7 @@ class AuditEventORM(Base):
 # ---------------------------------------------------------------------------
 # REPOSITORY IMPLEMENTATIONS
 # ---------------------------------------------------------------------------
+
 
 class SqlResourceRepository(ResourceRepository):
     """Resource state in a relational database."""
@@ -532,7 +550,9 @@ class SqlDocumentRepository(DocumentRepository):
     def save_document(self, document: NormalizedDocument) -> None:
         session: Session = self._session_factory()
         try:
-            blocks_data = [b.__dict__ if hasattr(b, "__dict__") else b for b in document.blocks]
+            blocks_data = [
+                b.__dict__ if hasattr(b, "__dict__") else b for b in document.blocks
+            ]
             existing = session.get(DocumentORM, document.resource_id)
             if existing:
                 existing.title = document.title
@@ -559,13 +579,12 @@ class SqlDocumentRepository(DocumentRepository):
         try:
             row = session.get(DocumentORM, resource_id)
             if not row:
-                raise ResourceNotFoundError(f"Document for resource '{resource_id}' not found.")
+                raise ResourceNotFoundError(
+                    f"Document for resource '{resource_id}' not found."
+                )
 
             raw_blocks = row.blocks or []
-            blocks = [
-                TextBlock(**b) if isinstance(b, dict) else b
-                for b in raw_blocks
-            ]
+            blocks = [TextBlock(**b) if isinstance(b, dict) else b for b in raw_blocks]
             blocks.sort(key=lambda b: getattr(b, "order", 0))
 
             return NormalizedDocument(
@@ -590,11 +609,10 @@ class SqlVersionRepository(VersionRepository):
         session: Session = self._session_factory()
         try:
             # Atomically compute the next version_number inside transaction
-            stmt = (
-                select(func.coalesce(func.max(ContentVersionORM.version_number), 0))
-                .where(ContentVersionORM.resource_id == version.resource_id)
-            )
-            
+            stmt = select(
+                func.coalesce(func.max(ContentVersionORM.version_number), 0)
+            ).where(ContentVersionORM.resource_id == version.resource_id)
+
             # Use row locking if supported (PostgreSQL)
             if session.bind and session.bind.dialect.name == "postgresql":
                 stmt = stmt.with_for_update()
@@ -602,13 +620,17 @@ class SqlVersionRepository(VersionRepository):
             current_max = session.execute(stmt).scalar() or 0
             next_version = current_max + 1
 
-            units_data = [u.__dict__ if hasattr(u, "__dict__") else u for u in version.units]
+            units_data = [
+                u.__dict__ if hasattr(u, "__dict__") else u for u in version.units
+            ]
 
             row = ContentVersionORM(
                 version_id=version.version_id,
                 resource_id=version.resource_id,
                 version_number=next_version,
-                author_kind=version.author_kind.value if isinstance(version.author_kind, AuthorKind) else version.author_kind,
+                author_kind=version.author_kind.value
+                if isinstance(version.author_kind, AuthorKind)
+                else version.author_kind,
                 author_id=version.author_id,
                 engine=version.engine,
                 note=version.note,
@@ -619,7 +641,9 @@ class SqlVersionRepository(VersionRepository):
             session.commit()
         except exc.IntegrityError as e:
             session.rollback()
-            raise DuplicateResourceError("Version number collision on concurrent write.") from e
+            raise DuplicateResourceError(
+                "Version number collision on concurrent write."
+            ) from e
         finally:
             session.close()
 
@@ -669,10 +693,7 @@ class SqlVersionRepository(VersionRepository):
 
     def _to_domain(self, row: ContentVersionORM) -> ContentVersion:
         raw_units = row.units or []
-        units = [
-            TranslationUnit(**u) if isinstance(u, dict) else u
-            for u in raw_units
-        ]
+        units = [TranslationUnit(**u) if isinstance(u, dict) else u for u in raw_units]
         return ContentVersion(
             version_id=row.version_id,
             resource_id=row.resource_id,
@@ -702,7 +723,9 @@ class SqlReviewRepository(ReviewRepository):
                 )
             ).scalar_one_or_none()
             if existing:
-                raise DuplicateResourceError(f"Open assignment already exists for resource '{assignment.resource_id}'.")
+                raise DuplicateResourceError(
+                    f"Open assignment already exists for resource '{assignment.resource_id}'."
+                )
 
             row = ReviewAssignmentORM(
                 assignment_id=assignment.assignment_id,
@@ -723,7 +746,9 @@ class SqlReviewRepository(ReviewRepository):
         try:
             row = session.get(ReviewAssignmentORM, assignment_id)
             if not row:
-                raise AssignmentNotFoundError(f"Assignment '{assignment_id}' not found.")
+                raise AssignmentNotFoundError(
+                    f"Assignment '{assignment_id}' not found."
+                )
             return self._to_domain_assignment(row)
         finally:
             session.close()
@@ -741,7 +766,10 @@ class SqlReviewRepository(ReviewRepository):
                         ReviewAssignmentORM.reviewer_id.is_(None),
                         ReviewAssignmentORM.completed_at.is_(None),
                     )
-                    .order_by(ReviewAssignmentORM.priority.desc(), ReviewAssignmentORM.assigned_at.asc())
+                    .order_by(
+                        ReviewAssignmentORM.priority.desc(),
+                        ReviewAssignmentORM.assigned_at.asc(),
+                    )
                     .limit(1)
                     .with_for_update(skip_locked=True)
                 )
@@ -761,7 +789,10 @@ class SqlReviewRepository(ReviewRepository):
                         ReviewAssignmentORM.reviewer_id.is_(None),
                         ReviewAssignmentORM.completed_at.is_(None),
                     )
-                    .order_by(ReviewAssignmentORM.priority.desc(), ReviewAssignmentORM.assigned_at.asc())
+                    .order_by(
+                        ReviewAssignmentORM.priority.desc(),
+                        ReviewAssignmentORM.assigned_at.asc(),
+                    )
                 )
                 candidate_ids = session.execute(stmt).scalars().all()
 
@@ -790,10 +821,14 @@ class SqlReviewRepository(ReviewRepository):
         try:
             row = session.get(ReviewAssignmentORM, assignment.assignment_id)
             if not row:
-                raise AssignmentNotFoundError(f"Assignment '{assignment.assignment_id}' not found.")
+                raise AssignmentNotFoundError(
+                    f"Assignment '{assignment.assignment_id}' not found."
+                )
 
             if row.reviewer_id != assignment.reviewer_id:
-                raise UnauthorizedAssignmentAccessError("Cannot modify an assignment assigned to another reviewer.")
+                raise UnauthorizedAssignmentAccessError(
+                    "Cannot modify an assignment assigned to another reviewer."
+                )
 
             row.decision = assignment.decision.value if assignment.decision else None
             row.completed_at = assignment.completed_at
@@ -810,7 +845,9 @@ class SqlReviewRepository(ReviewRepository):
                 actor_id=event.actor_id,
                 action=event.action,
                 from_status=event.from_status.value if event.from_status else None,
-                to_status=event.to_status.value if isinstance(event.to_status, ResourceStatus) else event.to_status,
+                to_status=event.to_status.value
+                if isinstance(event.to_status, ResourceStatus)
+                else event.to_status,
                 at=event.at,
                 details=event.details,
             )
@@ -834,7 +871,9 @@ class SqlReviewRepository(ReviewRepository):
                     resource_id=row.resource_id,
                     actor_id=row.actor_id,
                     action=row.action,
-                    from_status=ResourceStatus(row.from_status) if row.from_status else None,
+                    from_status=ResourceStatus(row.from_status)
+                    if row.from_status
+                    else None,
                     to_status=ResourceStatus(row.to_status),
                     at=row.at,
                     details=row.details,

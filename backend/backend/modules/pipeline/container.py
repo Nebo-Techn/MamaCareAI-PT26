@@ -79,6 +79,7 @@ class Container:
 # Each factory is the ONLY place its adapter is constructed. When someone asks
 # "where does the pipeline decide to use S3?", the answer is one function.
 
+
 def build_queue(settings: PipelineSettings) -> JobQueue:
     """memory | sqs | kafka.
 

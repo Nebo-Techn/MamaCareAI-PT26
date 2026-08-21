@@ -26,8 +26,18 @@ class ContentDeduplicator(Deduplicator):
 
     # Tracking parameters that change per visit but never change the content.
     STRIP_QUERY_PARAMS: frozenset[str] = frozenset(
-        {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-         "fbclid", "gclid", "ref", "session", "sessionid"}
+        {
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_term",
+            "utm_content",
+            "fbclid",
+            "gclid",
+            "ref",
+            "session",
+            "sessionid",
+        }
     )
 
     def __init__(self, *, resources: ResourceRepository) -> None:

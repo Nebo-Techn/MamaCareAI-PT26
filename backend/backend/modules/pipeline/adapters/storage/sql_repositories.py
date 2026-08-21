@@ -165,14 +165,14 @@ class SqlVersionRepository(VersionRepository):
 
     def save_version(self, version: ContentVersion) -> None:
         """TODO:
-          [ ] INSERT ONLY. There is deliberately no update method on the port.
-          [ ] Assign version_number INSIDE the transaction:
-                  SELECT COALESCE(MAX(version_number), 0) + 1
-                  FROM content_versions WHERE resource_id = :id
-              with the rows locked (SELECT ... FOR UPDATE). Computing it in
-              Python beforehand gives two concurrent reviewers the same number,
-              and the UNIQUE constraint then rejects one of their edits —
-              losing a reviewer's work, which is unacceptable.
+        [ ] INSERT ONLY. There is deliberately no update method on the port.
+        [ ] Assign version_number INSIDE the transaction:
+                SELECT COALESCE(MAX(version_number), 0) + 1
+                FROM content_versions WHERE resource_id = :id
+            with the rows locked (SELECT ... FOR UPDATE). Computing it in
+            Python beforehand gives two concurrent reviewers the same number,
+            and the UNIQUE constraint then rejects one of their edits —
+            losing a reviewer's work, which is unacceptable.
         """
         raise NotImplementedError
 

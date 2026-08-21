@@ -24,7 +24,9 @@ from ...ports.language_detector import DetectionResult, LanguageDetector
 class FastTextDetector(LanguageDetector):
     """Language identification with fastText lid.176."""
 
-    def __init__(self, *, model_path: str, max_chars: int = 5000, top_k: int = 3) -> None:
+    def __init__(
+        self, *, model_path: str, max_chars: int = 5000, top_k: int = 3
+    ) -> None:
         # TODO: load the model ONCE here. It is ~130MB; loading per call would
         # make the cheapest stage in the pipeline the slowest.
         self._model_path = model_path

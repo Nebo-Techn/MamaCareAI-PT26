@@ -34,7 +34,7 @@ class CloudTranslator(Translator):
     def __init__(
         self,
         *,
-        provider: str,              # "google" | "aws" | "azure"
+        provider: str,  # "google" | "aws" | "azure"
         api_key: str | None = None,
         region: str | None = None,
         batch_size: int = 16,

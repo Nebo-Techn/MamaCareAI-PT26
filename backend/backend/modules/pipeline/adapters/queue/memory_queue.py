@@ -35,7 +35,9 @@ class MemoryQueue(JobQueue):
         sleep, or a delayed retry blocks every other job behind it."""
         raise NotImplementedError
 
-    def consume(self, stage: str, *, max_messages: int = 1) -> Iterator[AbstractContextManager[Job]]:
+    def consume(
+        self, stage: str, *, max_messages: int = 1
+    ) -> Iterator[AbstractContextManager[Job]]:
         """TODO: yield a context manager per job.
 
         On clean exit: drop the job (ack).

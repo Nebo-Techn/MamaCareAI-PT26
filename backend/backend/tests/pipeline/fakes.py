@@ -290,7 +290,10 @@ class FakeSearchIndex(SearchIndex):
         query_lower = query.lower()
 
         for data in self._index.values():
-            if query_lower in data["text"].lower() or query_lower in data["title"].lower():
+            if (
+                query_lower in data["text"].lower()
+                or query_lower in data["title"].lower()
+            ):
                 results.append(data)
                 if len(results) >= limit:
                     break

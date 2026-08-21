@@ -127,9 +127,9 @@ def test_extract_serializes_table_rows_and_flags_tables() -> None:
     )
 
     rows = [b for b in doc.blocks if b.kind == "list_item"]
-    assert rows == [
-        doc.blocks[i] for i in (1, 2, 3)
-    ] or any("Symptom" in b.text for b in rows)
+    assert rows == [doc.blocks[i] for i in (1, 2, 3)] or any(
+        "Symptom" in b.text for b in rows
+    )
     assert any(b.text == "Fever | Any time of day" for b in rows)
     assert doc.source_metadata.get("contains_tables") is True
 
@@ -169,9 +169,7 @@ def test_extract_normalizes_nbsp_and_zero_width() -> None:
         "Padding padding padding padding padding padding padding.</p>"
         "</div></body></html>"
     ).encode("utf-8")
-    doc = make_extractor().extract(
-        "r1", html, metadata={"content_type": "text/html"}
-    )
+    doc = make_extractor().extract("r1", html, metadata={"content_type": "text/html"})
 
     paragraph = next(b.text for b in doc.blocks if b.kind == "paragraph")
     assert "\u200b" not in paragraph

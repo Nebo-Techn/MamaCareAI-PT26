@@ -36,11 +36,11 @@ class SqsQueue(JobQueue):
     def __init__(
         self,
         *,
-        queue_urls: dict[str, str],      # stage name -> queue URL
+        queue_urls: dict[str, str],  # stage name -> queue URL
         dead_letter_url: str,
         region: str,
         visibility_timeout: int = 300,
-        wait_time_seconds: int = 20,     # long polling — see below
+        wait_time_seconds: int = 20,  # long polling — see below
     ) -> None:
         # TODO: one boto3 SQS client, reused.
         self._queue_urls = queue_urls
@@ -54,32 +54,34 @@ class SqsQueue(JobQueue):
 
     def publish(self, job: Job) -> None:
         """TODO:
-          [ ] Serialize the Job to JSON (it is small by design).
-          [ ] send_message to the stage's queue URL.
-          [ ] For `not_before`, use DelaySeconds (max 900s = 15 min). For
-              longer backoffs, publish to a delay queue or store the job with
-              a visible_at timestamp — do NOT sleep in the worker.
-          [ ] Unknown stage -> PermanentError naming the stage. A typo should
-              fail immediately, not publish into the void.
+        [ ] Serialize the Job to JSON (it is small by design).
+        [ ] send_message to the stage's queue URL.
+        [ ] For `not_before`, use DelaySeconds (max 900s = 15 min). For
+            longer backoffs, publish to a delay queue or store the job with
+            a visible_at timestamp — do NOT sleep in the worker.
+        [ ] Unknown stage -> PermanentError naming the stage. A typo should
+            fail immediately, not publish into the void.
         """
         raise NotImplementedError
 
-    def consume(self, stage: str, *, max_messages: int = 1) -> Iterator[AbstractContextManager[Job]]:
+    def consume(
+        self, stage: str, *, max_messages: int = 1
+    ) -> Iterator[AbstractContextManager[Job]]:
         """TODO:
-          [ ] receive_message with WaitTimeSeconds=self._wait_time (long poll)
-              and MaxNumberOfMessages=max_messages.
-          [ ] Yield a context manager per message:
-                  clean exit -> delete_message (ack)
-                  exception  -> do NOT delete; let the visibility timeout expire
-                                so SQS redelivers, OR call change_message_visibility
-                                with the backoff delay to retry sooner.
-          [ ] For LONG-RUNNING STAGES (ASR, OCR), extend visibility periodically
-              from a heartbeat thread while the job runs. Without it, SQS
-              redelivers a job that is still being processed — the duplicate
-              transcription problem from the module docstring.
-          [ ] Configure a redrive policy on the queue itself so SQS moves
-              repeatedly-failing messages to the DLQ automatically. Belt and
-              braces alongside our own dead-letter handling.
+        [ ] receive_message with WaitTimeSeconds=self._wait_time (long poll)
+            and MaxNumberOfMessages=max_messages.
+        [ ] Yield a context manager per message:
+                clean exit -> delete_message (ack)
+                exception  -> do NOT delete; let the visibility timeout expire
+                              so SQS redelivers, OR call change_message_visibility
+                              with the backoff delay to retry sooner.
+        [ ] For LONG-RUNNING STAGES (ASR, OCR), extend visibility periodically
+            from a heartbeat thread while the job runs. Without it, SQS
+            redelivers a job that is still being processed — the duplicate
+            transcription problem from the module docstring.
+        [ ] Configure a redrive policy on the queue itself so SQS moves
+            repeatedly-failing messages to the DLQ automatically. Belt and
+            braces alongside our own dead-letter handling.
         """
         raise NotImplementedError
 

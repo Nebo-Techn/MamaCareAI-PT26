@@ -18,8 +18,8 @@ from dataclasses import dataclass
 class DetectionResult:
     """Detected language plus the model's confidence in it."""
 
-    language: str          # ISO 639-1 where possible ("en", "fr", "sw")
-    confidence: float      # 0.0 - 1.0
+    language: str  # ISO 639-1 where possible ("en", "fr", "sw")
+    confidence: float  # 0.0 - 1.0
     # Runner-up candidates, most likely first. Shown to the human confirming a
     # low-confidence result so they pick from a list instead of typing a guess.
     alternatives: tuple[tuple[str, float], ...] = ()

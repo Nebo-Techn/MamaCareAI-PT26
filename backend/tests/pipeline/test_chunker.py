@@ -1,4 +1,5 @@
 import pytest
+
 from backend.modules.pipeline.adapters.translation.chunker import Chunk, Chunker
 from backend.modules.pipeline.domain.models import TextBlock
 
@@ -25,7 +26,9 @@ def test_chunk_greedy_pack_whole_blocks() -> None:
 
 def test_chunk_huge_block_splits_on_sentences() -> None:
     chunker = Chunker(max_chars=100)
-    huge_text = "Dr. Jane visited the clinic. She checked the maternal records carefully."
+    huge_text = (
+        "Dr. Jane visited the clinic. She checked the maternal records carefully."
+    )
     b1 = create_block(1, huge_text)
 
     chunks = chunker.chunk((b1,))

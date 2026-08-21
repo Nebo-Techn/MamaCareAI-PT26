@@ -45,22 +45,24 @@ class ResourceStatus(str, Enum):
     """
 
     # --- Stage 1: ingestion ---
-    SUBMITTED = "submitted"                 # job accepted, nothing fetched yet
-    DUPLICATE = "duplicate"                  # dedup hit; terminal, no reprocessing
-    FETCHED = "fetched"                      # raw bytes are in object storage
+    SUBMITTED = "submitted"  # job accepted, nothing fetched yet
+    DUPLICATE = "duplicate"  # dedup hit; terminal, no reprocessing
+    FETCHED = "fetched"  # raw bytes are in object storage
 
     # --- Stage 2: extraction & normalization ---
-    EXTRACTED = "extracted"                  # normalized text exists
+    EXTRACTED = "extracted"  # normalized text exists
 
     # --- Stage 3: language detection ---
     LANGUAGE_DETECTED = "language_detected"
-    NEEDS_LANGUAGE_CONFIRMATION = "needs_language_confirmation"  # low confidence -> human
+    NEEDS_LANGUAGE_CONFIRMATION = (
+        "needs_language_confirmation"  # low confidence -> human
+    )
 
     # --- Stage 4: translation ---
-    TRANSLATED = "translated"                # machine translation output exists
+    TRANSLATED = "translated"  # machine translation output exists
 
     # --- Stage 5: storage ---
-    STORED = "stored"                        # indexed + versioned, ready for review
+    STORED = "stored"  # indexed + versioned, ready for review
 
     # --- Stage 6: human review ---
     IN_REVIEW = "in_review"
@@ -73,15 +75,15 @@ class ResourceStatus(str, Enum):
 
     # --- Off-happy-path ---
     BLOCKED_LICENSING = "blocked_licensing"  # compliance gate said no
-    FAILED = "failed"                        # retries exhausted; in the dead-letter queue
+    FAILED = "failed"  # retries exhausted; in the dead-letter queue
 
 
 class ReviewDecision(str, Enum):
     """What a human reviewer decided about a machine translation."""
 
-    APPROVE = "approve"          # MT output is good as-is
-    NEEDS_EDIT = "needs_edit"    # requires human correction before approval
-    REJECT = "reject"            # unusable source/translation; do not publish
+    APPROVE = "approve"  # MT output is good as-is
+    NEEDS_EDIT = "needs_edit"  # requires human correction before approval
+    REJECT = "reject"  # unusable source/translation; do not publish
 
 
 class VersionAuthorKind(str, Enum):

@@ -64,15 +64,17 @@ class OpenSearchIndex(SearchIndex):
         """
         raise NotImplementedError
 
-    def search(self, query: str, *, limit: int = 20, offset: int = 0) -> list[SearchHit]:
+    def search(
+        self, query: str, *, limit: int = 20, offset: int = 0
+    ) -> list[SearchHit]:
         """TODO:
-          [ ] multi_match across title^2 and translated_text (title boosted —
-              a match in the title is a stronger signal).
-          [ ] Enable highlighting to populate `snippet`.
-          [ ] Use from/size for paging, and be aware of the 10k deep-paging
-              limit; use search_after if a caller ever needs to go past it.
-          [ ] Map connection errors to TransientError. Search being briefly
-              down must not fail the pipeline — it is a derived read model.
+        [ ] multi_match across title^2 and translated_text (title boosted —
+            a match in the title is a stronger signal).
+        [ ] Enable highlighting to populate `snippet`.
+        [ ] Use from/size for paging, and be aware of the 10k deep-paging
+            limit; use search_after if a caller ever needs to go past it.
+        [ ] Map connection errors to TransientError. Search being briefly
+            down must not fail the pipeline — it is a derived read model.
         """
         raise NotImplementedError
 
