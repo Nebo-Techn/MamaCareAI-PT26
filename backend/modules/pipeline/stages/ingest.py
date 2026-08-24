@@ -101,10 +101,12 @@ class IngestStage(Stage):
         # 2. PICK THE FETCHER by source type
         try:
             fetcher = self._fetchers.get(resource.source_type)
-        except UnsupportedSourceType:
+        except UnsupportedSourceType as exc:
             # Permanent error - no fetcher for this type
-            raise FetchError(f"No fetcher registered for source type {resource.source_type}", resource_id=resource.resource_id)
-
+            raise UnsupportedSourceType(
+                f"No fetcher registered for source type {resource.source_type}",
+                resource_id=resource.resource_id,
+            ) from exc
         # 3. FETCH
         try:
             result = fetcher.fetch(resource.source_url)
