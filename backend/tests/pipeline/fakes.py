@@ -22,51 +22,6 @@ stage pass its tests, which is worse than having no test at all.
 
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# TODO (junior dev): implement one fake per port.
-#
-# FakeResourceRepository(ResourceRepository)
-#   dict[str, Resource]
-#   [ ] `save` MUST simulate the conditional update: track a version per
-#       resource and raise InvalidStateTransition on a stale write. Without
-#       that, the concurrency behaviour the real repository implements is
-#       never exercised by any test.
-#
-# FakeDocumentRepository / FakeVersionRepository / FakeReviewRepository
-#   [ ] FakeVersionRepository is APPEND-ONLY, like the real one, and assigns
-#       version_number itself.
-#
-# FakeObjectStore(ObjectStore)
-#   dict[str, bytes]
-#
-# FakeJobQueue(JobQueue)
-#   dict[stage, list[Job]] + a dead_letter list
-#   [ ] Expose the lists so tests can assert "a 'translate' job was published"
-#       and "nothing was dead-lettered".
-#
-# FakeSearchIndex(SearchIndex)
-#   dict[resource_id, IndexedResource]; `search` can be a naive substring scan.
-#
-# FakeLanguageDetector(LanguageDetector)
-#   [ ] Constructor takes the language and confidence to return, so a test can
-#       set up the low-confidence path in one line.
-#
-# FakeTranslator(Translator)
-#   [ ] Returns "[sw] " + text. Same length, same order — honour the contract.
-#   [ ] Add a `fail_on` option so a test can simulate a provider failure and
-#       verify the retry/dead-letter behaviour in stages/base.py.
-#
-# FakeFetcher(SourceFetcher) / FakeExtractor(ContentExtractor)
-#   [ ] Constructor takes canned content to return.
-#
-# --- Test data builders ---
-#
-# make_resource(**overrides) -> Resource
-# make_document(blocks=..., **overrides) -> NormalizedDocument
-#   [ ] Sensible defaults, overridable per field. Without builders every test
-#       constructs a 12-field Resource by hand, and adding a field to the model
-#       means editing forty tests. With them, it means editing one function.
-# ---------------------------------------------------------------------------
 import uuid
 from datetime import datetime, timezone
 
@@ -75,7 +30,9 @@ from backend.modules.pipeline.domain.enums import (
     SourceType,
 )
 from backend.modules.pipeline.domain.errors import (
+    ExtractionError,
     FetchError,
+    UnsupportedSourceType,
 )
 from backend.modules.pipeline.domain.models import (
     AuditEvent,
@@ -403,6 +360,72 @@ class FakeExtractor(ContentExtractor):
             ),
             source_metadata=metadata,
         )
+
+# ---------------------------------------------------------------------------
+# MOCK REGISTRIES (for Dev A's testing only - don't modify actual registry.py)
+# ---------------------------------------------------------------------------
+
+
+class MockFetcherRegistry:
+    """Mock fetcher registry for Dev A's testing - simulates FetcherRegistry behavior."""
+
+    def __init__(self) -> None:
+        self._fetchers: dict[SourceType, SourceFetcher] = {}
+
+    def register(self, fetcher: SourceFetcher) -> None:
+        source_type = fetcher.source_type
+        if source_type in self._fetchers:
+            raise ValueError(f"Fetcher for {source_type} already registered")
+        self._fetchers[source_type] = fetcher
+
+    def get(self, source_type: SourceType) -> SourceFetcher:
+        if source_type not in self._fetchers:
+            raise UnsupportedSourceType(f"No fetcher registered for {source_type}")
+        return self._fetchers[source_type]
+
+
+class MockExtractorRegistry:
+    """Mock extractor registry for Dev A's testing - simulates ExtractorRegistry behavior."""
+
+    def __init__(self) -> None:
+        self._extractors: list[tuple[int, ContentExtractor]] = []
+
+    def register(self, extractor: ContentExtractor, *, priority: int = 50) -> None:
+        self._extractors.append((priority, extractor))
+        self._extractors.sort(key=lambda x: x[0], reverse=True)
+
+    def select(self, content_type: str, content: bytes) -> ContentExtractor:
+        for priority, extractor in self._extractors:
+            if extractor.can_handle(content_type, content):
+                return extractor
+        raise ExtractionError(f"No extractor can handle content_type={content_type}")
+
+
+class MockDeduplicator(Deduplicator):
+    """Mock deduplicator for Dev A's testing - simulates ContentDeduplicator behavior."""
+
+    def __init__(self) -> None:
+        self._hashes: set[str] = set()
+
+    def compute_hash(self, *, source_url: str, content: bytes | str) -> str:
+        import hashlib
+
+        hasher = hashlib.sha256()
+        hasher.update(source_url.encode())
+
+        if isinstance(content, bytes):
+            hasher.update(content)
+        else:
+            hasher.update(content.encode("utf-8"))
+
+        return hasher.hexdigest()
+
+    def is_duplicate(self, content_hash: str) -> bool:
+        if content_hash in self._hashes:
+            return True
+        self._hashes.add(content_hash)
+        return False
+
 
 
 # ---------------------------------------------------------------------------

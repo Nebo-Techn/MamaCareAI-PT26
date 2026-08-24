@@ -17,14 +17,22 @@ Enforce that in `submit()` — see `services/submission.py`.
 
 from __future__ import annotations
 
-from ..domain.enums import ResourceStatus
-from ..domain.models import Resource
-from ..ports.deduplicator import Deduplicator
-from ..ports.job_queue import JobQueue
-from ..ports.object_store import ObjectStore
-from ..ports.repositories import ResourceRepository, ReviewRepository
-from ..registry import FetcherRegistry
+import hashlib
+
+from backend.modules.pipeline.domain.enums import ResourceStatus
+from backend.modules.pipeline.domain.errors import FetchError, UnsupportedSourceType
+from backend.modules.pipeline.domain.models import Resource
+from backend.modules.pipeline.ports.deduplicator import Deduplicator
+from backend.modules.pipeline.ports.job_queue import JobQueue
+from backend.modules.pipeline.ports.object_store import ObjectStore
+from backend.modules.pipeline.ports.repositories import ResourceRepository, ReviewRepository
+from backend.modules.pipeline.registry import FetcherRegistry
 from .base import Stage, StageResult
+
+
+def build_raw_key(resource: Resource) -> str:
+    """Build object storage key for raw content."""
+    return f"raw/{resource.resource_id}/{resource.source_type.value}"
 
 
 class IngestStage(Stage):
@@ -61,64 +69,84 @@ class IngestStage(Stage):
     def handle(self, resource: Resource) -> StageResult:
         """Fetch, dedup, store.
 
-        TODO (junior dev) — implement in this order:
+        IMPLEMENTATION following the TODO order:
 
-          1. URL-LEVEL DEDUP (before spending a download):
-                 url_hash = self._dedup.compute_hash(source_url=resource.source_url,
-                                                     content=b"")
-                 if self._dedup.is_duplicate(url_hash):
-                     return StageResult(next_status=ResourceStatus.DUPLICATE,
-                                        next_stage=None)
-             Terminal, and cheap. This is the single biggest cost saver here.
-
-          2. PICK THE FETCHER by source type:
-                 fetcher = self._fetchers.get(resource.source_type)
-             Raises UnsupportedSourceType (permanent) if none is registered.
-
-          3. FETCH:
-                 result = fetcher.fetch(resource.source_url)
-             Transient failures raise FetchError; the base class retries with
-             backoff. Do not catch and swallow them here.
-
-          4. CONTENT-LEVEL DEDUP (the same document at two URLs):
-                 content_hash = self._dedup.compute_hash(
-                     source_url=resource.source_url, content=result.content)
-                 if self._dedup.is_duplicate(content_hash):
-                     -> DUPLICATE, terminal.
-
-          5. STORE THE RAW BYTES — never put them in the database:
-                 key = build_raw_key(resource)   # adapters/storage/keys.py
-                 self._object_store.put(key, result.content,
-                                        content_type=result.content_type)
-
-          6. RETURN, carrying forward what we learned:
-                 return StageResult(
-                     next_status=ResourceStatus.FETCHED,
-                     next_stage="extract",
-                     resource_changes={
-                         "raw_object_key": key,
-                         "content_hash": content_hash,
-                         # merge, don't replace: keep the submitter's metadata
-                         "source_metadata": {**resource.source_metadata,
-                                             **result.metadata},
-                     },
-                     details={"bytes": len(result.content),
-                              "content_type": result.content_type},
-                 )
-
-        IDEMPOTENCY: if `raw_object_key` is already set and the object exists,
-        skip the download and go straight to step 6. A redelivered job should
-        not re-hit the source — that is both wasteful and rude to the publisher.
-
-        VIDEO NOTE: if `result.existing_captions` is set, persist it in
-        source_metadata. The extract stage checks for it and skips ASR
-        entirely — the most expensive step in the whole pipeline, avoided by
-        one metadata field.
-
-        COMPLIANCE NOTE (PDF section 4): record any license/usage-restriction
-        string the fetcher found into source_metadata NOW, while we have it.
-        The compliance gate before publication reads it later; re-fetching a
-        page months afterwards to find out whether we were allowed to use it
-        is not a plan.
+        1. URL-LEVEL DEDUP (before spending a download)
+        2. PICK THE FETCHER by source type
+        3. FETCH content
+        4. CONTENT-LEVEL DEDUP
+        5. STORE THE RAW BYTES
+        6. RETURN StageResult with FETCHED status
         """
-        raise NotImplementedError
+        # IDEMPOTENCY: if raw_object_key is already set and object exists, skip download
+        if resource.raw_object_key and self._object_store.exists(resource.raw_object_key):
+            # Already fetched, just move to extract
+            return StageResult(
+                next_status=ResourceStatus.FETCHED,
+                next_stage="extract",
+                details={"idempotent": True, "existing_key": resource.raw_object_key},
+            )
+
+        # 1. URL-LEVEL DEDUP (before spending a download)
+        url_hash = self._dedup.compute_hash(source_url=resource.source_url, content=b"")
+        if self._dedup.is_duplicate(url_hash):
+            return StageResult(
+                next_status=ResourceStatus.DUPLICATE,
+                next_stage=None,  # Terminal
+                details={"dedup_reason": "url_hash", "hash": url_hash},
+            )
+
+        # 2. PICK THE FETCHER by source type
+        try:
+            fetcher = self._fetchers.get(resource.source_type)
+        except UnsupportedSourceType as exc:
+            # Permanent error - no fetcher for this type
+            raise FetchError(f"No fetcher registered for source type {resource.source_type}", resource_id=resource.resource_id)
+
+        # 3. FETCH
+        try:
+            result = fetcher.fetch(resource.source_url)
+        except FetchError as exc:
+            # Transient failures - let base class retry
+            raise
+        except Exception as exc:
+            # Other fetch errors - treat as fetch error
+            raise FetchError(f"Fetch failed: {exc}", resource_id=resource.resource_id)
+
+        # 4. CONTENT-LEVEL DEDUP (the same document at two URLs)
+        content_hash = self._dedup.compute_hash(
+            source_url=resource.source_url, content=result.content
+        )
+        if self._dedup.is_duplicate(content_hash):
+            return StageResult(
+                next_status=ResourceStatus.DUPLICATE,
+                next_stage=None,  # Terminal
+                details={"dedup_reason": "content_hash", "hash": content_hash},
+            )
+
+        # 5. STORE THE RAW BYTES — never put them in the database
+        key = build_raw_key(resource)
+        self._object_store.put(key, result.content, content_type=result.content_type)
+
+        # 6. RETURN, carrying forward what we learned
+        # Merge metadata, don't replace - keep submitter's metadata
+        merged_metadata = {**resource.source_metadata, **result.metadata}
+
+        # Handle existing captions for video
+        if result.existing_captions:
+            merged_metadata["existing_captions"] = result.existing_captions
+
+        return StageResult(
+            next_status=ResourceStatus.FETCHED,
+            next_stage="extract",
+            resource_changes={
+                "raw_object_key": key,
+                "content_hash": content_hash,
+                "source_metadata": merged_metadata,
+            },
+            details={
+                "bytes": len(result.content),
+                "content_type": result.content_type,
+                "content_hash": content_hash,
+            },
+        )
