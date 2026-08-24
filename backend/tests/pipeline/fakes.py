@@ -183,13 +183,10 @@ class FakeReviewRepository(ReviewRepository):
     def create_assignment(self, assignment: ReviewAssignment) -> None:
         self._assignments[assignment.assignment_id] = assignment
 
-    def get_assignment(self, resource_id: str) -> ReviewAssignment | None:
-        if resource_id in self._assignments:
-            return self._assignments[resource_id]
-        for assignment in self._assignments.values():
-            if assignment.resource_id == resource_id:
-                return assignment
-        return None
+    def get_assignment(self, assignment_id: str) -> ReviewAssignment:
+        if assignment_id not in self._assignments:
+            raise KeyError(f"Assignment {assignment_id} not found")
+        return self._assignments[assignment_id]
 
     def claim_next(self, reviewer_id: str) -> ReviewAssignment | None:
         _ = reviewer_id
