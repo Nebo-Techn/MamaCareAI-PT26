@@ -114,15 +114,18 @@ class ExtractStage(Stage):
             )
 
         # - `order` values are unique and contiguous
-        orders = [block.order for block in document.blocks]
+        orders = sorted(block.order for block in document.blocks)
         if len(set(orders)) != len(orders):
-            raise ExtractionError("TextBlock order values are not unique", resource_id=resource.resource_id)
+            raise ExtractionError(
+                "TextBlock order values are not unique", resource_id=resource.resource_id
+            )
 
-        if orders != sorted(orders):
-            raise ExtractionError("TextBlock order values are not contiguous", resource_id=resource.resource_id)
-
-        if orders[0] != 0:
-            raise ExtractionError("TextBlock order values do not start at 0", resource_id=resource.resource_id)
+        expected = list(range(len(orders)))
+        if orders != expected:
+            raise ExtractionError(
+                f"TextBlock order values must be contiguous starting at 0 (got {orders})",
+                resource_id=resource.resource_id,
+            )
 
         # 5. PERSIST and continue
         # IDEMPOTENCY: save_document overwrites by resource_id, so re-running is safe by construction
