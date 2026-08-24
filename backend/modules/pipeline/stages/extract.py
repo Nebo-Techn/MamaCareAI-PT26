@@ -83,11 +83,15 @@ class ExtractStage(Stage):
 
         # 2. SELECT THE EXTRACTOR VIA THE REGISTRY, with fallback
         # The registry tries candidates in priority order and picks the first whose can_handle returns True
+        content_type = str(resource.source_metadata.get("content_type", "application/octet-stream"))
         try:
-            extractor = self._extractors.select("application/octet-stream", content)
+            extractor = self._extractors.select(content_type, content)
         except ExtractionError as exc:
             # No extractor could handle this content
-            raise ExtractionError(f"No extractor available for content: {exc}", resource_id=resource.resource_id)
+            raise ExtractionError(
+                f"No extractor available for content_type={content_type}: {exc}",
+                resource_id=resource.resource_id,
+            )
 
         # 3. EXTRACT
         try:
