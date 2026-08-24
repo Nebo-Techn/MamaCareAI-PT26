@@ -23,7 +23,7 @@ stage pass its tests, which is worse than having no test at all.
 from __future__ import annotations
 
 import uuid
-from contextlib import nullcontext
+from contextlib import nullcontext  # noqa: F401
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -247,9 +247,9 @@ class FakeJobQueue(JobQueue):
         for _ in range(count):
             job = queue[0]
 
-            class _Handle:  # noqa: N801
+            class _Handle:
                 def __enter__(self):
-                    return job
+                    return job  # noqa: B023
 
                 def __exit__(self, exc_type, exc, tb):
                     # ACK on success by removing the message; on exception leave it for redelivery.
