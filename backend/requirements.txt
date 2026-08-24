@@ -56,6 +56,6 @@ chardet             # charset fallback when decoding HTML (meta/header both abse
 # prometheus-client   # per-stage metrics
 
 # Production only (not needed for the free-tier MVP)
-# boto3               # S3 object storage + SQS queue
+boto3                 # S3 object storage + SQS queue
 # psycopg[binary]     # PostgreSQL driver
 # opensearch-py       # OpenSearch full-text index
