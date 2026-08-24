@@ -21,10 +21,7 @@ get slow — at which point people stop running them.
 
 # These imports would be from the actual backend module
 # For now, we'll use relative imports since this is a standalone implementation
-import sys
 import uuid
-
-sys.path.insert(0, "C:/Users/WALII/MamaCareAI/MamaCareAI-PT26")
 
 from backend.modules.pipeline.domain.enums import ResourceStatus, SourceType
 from backend.modules.pipeline.domain.models import Job, NormalizedDocument, TextBlock
