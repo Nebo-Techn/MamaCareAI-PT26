@@ -245,8 +245,19 @@ class FakeJobQueue(JobQueue):
         queue = self._queues.get(stage, [])
         count = min(max_messages, len(queue))
         for _ in range(count):
-            yield nullcontext(queue.pop(0))
+            job = queue[0]
 
+            class _Handle:  # noqa: N801
+                def __enter__(self):
+                    return job
+
+                def __exit__(self, exc_type, exc, tb):
+                    # ACK on success by removing the message; on exception leave it for redelivery.
+                    if exc_type is None:
+                        queue.pop(0)
+                    return False
+
+            yield _Handle()
     def depth(self, stage: str) -> int:
         return len(self._queues.get(stage, []))
 
