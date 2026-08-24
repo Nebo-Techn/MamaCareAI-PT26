@@ -19,22 +19,18 @@ adapter's business, and testing it here means these tests need real files and
 get slow — at which point people stop running them.
 """
 
-import pytest
-import uuid
-
 # These imports would be from the actual backend module
 # For now, we'll use relative imports since this is a standalone implementation
 import sys
+import uuid
+
 sys.path.insert(0, "C:/Users/WALII/MamaCareAI/MamaCareAI-PT26")
 
 from backend.modules.pipeline.domain.enums import ResourceStatus, SourceType
-from backend.modules.pipeline.domain.errors import ExtractionError
-from backend.modules.pipeline.domain.models import NormalizedDocument, TextBlock, Job
-from backend.modules.pipeline.ports.fetcher import FetchResult
+from backend.modules.pipeline.domain.models import Job, NormalizedDocument, TextBlock
+from backend.modules.pipeline.stages.extract import ExtractStage
+from backend.modules.pipeline.stages.ingest import IngestStage
 from backend.tests.pipeline.fakes import (
-    MockDeduplicator,
-    MockExtractorRegistry,
-    MockFetcherRegistry,
     FakeDocumentRepository,
     FakeExtractor,
     FakeFetcher,
@@ -42,10 +38,11 @@ from backend.tests.pipeline.fakes import (
     FakeObjectStore,
     FakeResourceRepository,
     FakeReviewRepository,
+    MockDeduplicator,
+    MockExtractorRegistry,
+    MockFetcherRegistry,
     make_resource,
 )
-from backend.modules.pipeline.stages.ingest import IngestStage
-from backend.modules.pipeline.stages.extract import ExtractStage
 
 
 def build_test_container():

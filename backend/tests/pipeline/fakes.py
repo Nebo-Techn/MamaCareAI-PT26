@@ -23,6 +23,8 @@ stage pass its tests, which is worse than having no test at all.
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from backend.modules.pipeline.domain.enums import (
@@ -77,10 +79,22 @@ class FakeResourceRepository(ResourceRepository):
         self._resources: dict[str, Resource] = {}
         self._versions: dict[str, int] = {}  # Track version for conditional updates
 
+    def add(self, resource: Resource) -> None:
+        if resource.resource_id in self._resources:
+            raise ValueError(f"Resource {resource.resource_id} already exists")
+        self._resources[resource.resource_id] = resource
+        self._versions[resource.resource_id] = 1
+
     def get(self, resource_id: str) -> Resource:
         if resource_id not in self._resources:
             raise KeyError(f"Resource {resource_id} not found")
         return self._resources[resource_id]
+
+    def find_by_content_hash(self, content_hash: str) -> Resource | None:
+        for resource in self._resources.values():
+            if resource.content_hash == content_hash:
+                return resource
+        return None
 
     def save(self, resource: Resource) -> None:
         """Simulate conditional update - raises if version mismatch."""
@@ -97,6 +111,12 @@ class FakeResourceRepository(ResourceRepository):
 
         self._resources[resource.resource_id] = resource
         self._versions[resource.resource_id] = expected_version
+
+    def list_by_status(
+        self, status: ResourceStatus, *, limit: int = 100, offset: int = 0
+    ) -> list[Resource]:
+        matching = [resource for resource in self._resources.values() if resource.status == status]
+        return matching[offset : offset + limit]
 
 
 class FakeDocumentRepository(DocumentRepository):
@@ -160,9 +180,21 @@ class FakeReviewRepository(ReviewRepository):
         self._assignments: dict[str, ReviewAssignment] = {}
         self._audit_events: list[AuditEvent] = []
 
+    def create_assignment(self, assignment: ReviewAssignment) -> None:
+        self._assignments[assignment.assignment_id] = assignment
+
     def get_assignment(self, resource_id: str) -> ReviewAssignment | None:
+        if resource_id in self._assignments:
+            return self._assignments[resource_id]
         for assignment in self._assignments.values():
             if assignment.resource_id == resource_id:
+                return assignment
+        return None
+
+    def claim_next(self, reviewer_id: str) -> ReviewAssignment | None:
+        _ = reviewer_id
+        for assignment in self._assignments.values():
+            if assignment.reviewer_id is None:
                 return assignment
         return None
 
@@ -172,7 +204,7 @@ class FakeReviewRepository(ReviewRepository):
     def append_audit(self, event: AuditEvent) -> None:
         self._audit_events.append(event)
 
-    def get_audit_trail(self, resource_id: str) -> list[AuditEvent]:
+    def list_audit(self, resource_id: str) -> list[AuditEvent]:
         return [e for e in self._audit_events if e.resource_id == resource_id]
 
 
@@ -211,6 +243,15 @@ class FakeJobQueue(JobQueue):
         if stage not in self._queues:
             self._queues[stage] = []
         self._queues[stage].append(job)
+
+    def consume(self, stage: str, *, max_messages: int = 1):
+        queue = self._queues.get(stage, [])
+        count = min(max_messages, len(queue))
+        for _ in range(count):
+            yield nullcontext(queue.pop(0))
+
+    def depth(self, stage: str) -> int:
+        return len(self._queues.get(stage, []))
 
     def claim_next(self, stage: str) -> Job | None:
         if stage not in self._queues or not self._queues[stage]:
@@ -346,7 +387,7 @@ class FakeExtractor(ContentExtractor):
         self, resource_id: str, content: bytes, *, metadata: dict
     ) -> NormalizedDocument:
         if self._document:
-            return self._document
+            return replace(self._document, resource_id=resource_id)
 
         # Default simple document if none provided
         return NormalizedDocument(

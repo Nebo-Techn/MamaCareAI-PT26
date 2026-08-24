@@ -16,11 +16,18 @@ from __future__ import annotations
 
 from backend.modules.pipeline.domain.enums import ResourceStatus
 from backend.modules.pipeline.domain.errors import ExtractionError
-from backend.modules.pipeline.domain.models import NormalizedDocument, Resource, TextBlock
+from backend.modules.pipeline.domain.models import (
+    Resource,
+)
 from backend.modules.pipeline.ports.job_queue import JobQueue
 from backend.modules.pipeline.ports.object_store import ObjectStore
-from backend.modules.pipeline.ports.repositories import DocumentRepository, ResourceRepository, ReviewRepository
+from backend.modules.pipeline.ports.repositories import (
+    DocumentRepository,
+    ResourceRepository,
+    ReviewRepository,
+)
 from backend.modules.pipeline.registry import ExtractorRegistry
+
 from .base import Stage, StageResult
 
 
@@ -89,7 +96,7 @@ class ExtractStage(Stage):
                 content,
                 metadata=resource.source_metadata,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             raise ExtractionError(f"Extraction failed: {exc}", resource_id=resource.resource_id)
 
         # 4. VALIDATE THE OUTPUT before accepting it

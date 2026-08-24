@@ -21,22 +21,24 @@ correctness from this method. Get it reviewed before building on it.
 
 from __future__ import annotations
 
-from datetime import time
 import logging
-from abc import ABC, abstractmethod
 import random
+import time
 import uuid
+from abc import ABC, abstractmethod
 
 from backend.modules.pipeline.domain.enums import JobStatus, ResourceStatus
 from backend.modules.pipeline.domain.errors import (
-    InvalidStateTransition,
     PipelineError,
     ProviderRateLimited,
 )
 from backend.modules.pipeline.domain.models import AuditEvent, Job, Resource
 from backend.modules.pipeline.domain.state_machine import assert_can_transition
 from backend.modules.pipeline.ports.job_queue import JobQueue
-from backend.modules.pipeline.ports.repositories import ResourceRepository, ReviewRepository
+from backend.modules.pipeline.ports.repositories import (
+    ResourceRepository,
+    ReviewRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,9 +206,8 @@ class Stage(ABC):
 
             except Exception as exc:
                 # Unexpected error - bug, not transient fault
-                logger.error(
-                    f"Stage {self.name}: unexpected error for {job.resource_id}: {exc}",
-                    exc_info=True,
+                logger.exception(
+                    f"Stage {self.name}: unexpected error for {job.resource_id}"
                 )
                 # Dead letter it - retrying a bug just multiplies noise
                 failed_resource = resource.with_status(

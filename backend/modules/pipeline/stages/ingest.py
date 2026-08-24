@@ -17,16 +17,18 @@ Enforce that in `submit()` — see `services/submission.py`.
 
 from __future__ import annotations
 
-import hashlib
-
 from backend.modules.pipeline.domain.enums import ResourceStatus
 from backend.modules.pipeline.domain.errors import FetchError, UnsupportedSourceType
 from backend.modules.pipeline.domain.models import Resource
 from backend.modules.pipeline.ports.deduplicator import Deduplicator
 from backend.modules.pipeline.ports.job_queue import JobQueue
 from backend.modules.pipeline.ports.object_store import ObjectStore
-from backend.modules.pipeline.ports.repositories import ResourceRepository, ReviewRepository
+from backend.modules.pipeline.ports.repositories import (
+    ResourceRepository,
+    ReviewRepository,
+)
 from backend.modules.pipeline.registry import FetcherRegistry
+
 from .base import Stage, StageResult
 
 
@@ -99,17 +101,17 @@ class IngestStage(Stage):
         # 2. PICK THE FETCHER by source type
         try:
             fetcher = self._fetchers.get(resource.source_type)
-        except UnsupportedSourceType as exc:
+        except UnsupportedSourceType:
             # Permanent error - no fetcher for this type
             raise FetchError(f"No fetcher registered for source type {resource.source_type}", resource_id=resource.resource_id)
 
         # 3. FETCH
         try:
             result = fetcher.fetch(resource.source_url)
-        except FetchError as exc:
+        except FetchError:
             # Transient failures - let base class retry
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # Other fetch errors - treat as fetch error
             raise FetchError(f"Fetch failed: {exc}", resource_id=resource.resource_id)
 
