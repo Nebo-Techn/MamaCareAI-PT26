@@ -24,3 +24,7 @@ data/vector_store/
 # Nebo-internal only — grading, individual assessment notes, admin trackers,
 # unreleased report drafts. Never committed, never pushed. See internal/README.md.
 internal/
+
+pyproject.toml
+.python-version
+src

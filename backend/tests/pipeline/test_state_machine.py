@@ -1,60 +1,76 @@
-"""
-Tests for the resource lifecycle state machine.
-
-START HERE. WRITE THESE FIRST.
-This is the highest value-per-minute test file in the whole pipeline: pure
-functions over data, no I/O, no fixtures, no mocks, runs in milliseconds. It
-also pins down the workflow specification from PDF 3.6, so a later change that
-breaks the lifecycle fails here rather than in production.
-
-If a trainee is new to testing, this is the file to learn on.
-"""
-
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# TODO (junior dev): implement these tests.
-#
-# def test_happy_path_is_fully_connected():
-#     Walk SUBMITTED -> FETCHED -> EXTRACTED -> LANGUAGE_DETECTED ->
-#     TRANSLATED -> STORED -> IN_REVIEW -> APPROVED -> PUBLISHED, asserting
-#     can_transition() at every step. If someone breaks the chain, this fails.
-#
-# def test_already_swahili_skips_translation():
-#     LANGUAGE_DETECTED -> STORED must be allowed (PDF 3.4, first bullet).
-#
-# def test_review_loop():
-#     IN_REVIEW -> NEEDS_EDIT -> EDITED -> APPROVED all allowed.
-#     Also EDITED -> NEEDS_EDIT (a second round of changes is normal).
-#
-# def test_cannot_unapprove():
-#     APPROVED -> IN_REVIEW must be REJECTED. Once approved, the only ways out
-#     are PUBLISHED or BLOCKED_LICENSING. This protects the governance claim
-#     that approval is a real, recorded decision.
-#
-# def test_cannot_skip_review():
-#     STORED -> PUBLISHED must be REJECTED. Nothing reaches users without a
-#     human. This is the single most important assertion in the file — it is
-#     the executable form of the project's core safety promise.
-#
-# def test_terminal_states_have_no_exits():
-#     For each of PUBLISHED, DUPLICATE, BLOCKED_LICENSING, FAILED:
-#     ALLOWED_TRANSITIONS[state] is empty.
-#
-# def test_every_status_appears_in_the_map():
-#     for status in ResourceStatus: assert status in ALLOWED_TRANSITIONS
-#     Catches the classic bug: someone adds an enum value, forgets the
-#     transitions, and the pipeline mysteriously refuses to enter that state.
-#
-# def test_every_target_is_a_real_status():
-#     Every value in every transition set is a member of ResourceStatus.
-#
-# def test_assert_can_transition_raises_with_a_useful_message():
-#     Assert InvalidStateTransition is raised AND that the message names both
-#     states. A test that only checks the exception type lets someone ship
-#     "invalid transition" as the entire message, which helps nobody at 2am.
-#
-# def test_all_states_reachable_from_submitted():
-#     Graph traversal from SUBMITTED. Every non-terminal status should be
-#     reachable. An unreachable state is dead code or a missing arrow.
-# ---------------------------------------------------------------------------
+from itertools import pairwise
+
+import pytest
+
+from backend.modules.pipeline.domain.enums import ResourceStatus
+from backend.modules.pipeline.domain.errors import InvalidStateTransition
+from backend.modules.pipeline.domain.state_machine import (
+    ALLOWED_TRANSITIONS,
+    TERMINAL_STATES,
+    assert_can_transition,
+    can_transition,
+)
+
+S = ResourceStatus
+
+
+def test_happy_path_is_fully_connected():
+    path = [
+        S.SUBMITTED, S.FETCHED, S.EXTRACTED, S.LANGUAGE_DETECTED,
+        S.TRANSLATED, S.STORED, S.IN_REVIEW, S.APPROVED, S.PUBLISHED,
+    ]
+    assert all(can_transition(current, target) for current, target in pairwise(path))
+
+
+def test_already_swahili_skips_translation():
+    assert can_transition(S.LANGUAGE_DETECTED, S.STORED)
+
+
+def test_review_loop():
+    assert can_transition(S.IN_REVIEW, S.NEEDS_EDIT)
+    assert can_transition(S.NEEDS_EDIT, S.EDITED)
+    assert can_transition(S.EDITED, S.APPROVED)
+    assert can_transition(S.EDITED, S.NEEDS_EDIT)
+
+
+def test_cannot_unapprove():
+    assert not can_transition(S.APPROVED, S.IN_REVIEW)
+
+
+def test_cannot_skip_review():
+    assert not can_transition(S.STORED, S.PUBLISHED)
+
+
+def test_terminal_states_have_no_exits():
+    assert all(not ALLOWED_TRANSITIONS[state] for state in TERMINAL_STATES)
+
+
+def test_every_status_appears_in_the_map():
+    assert set(ResourceStatus) == set(ALLOWED_TRANSITIONS)
+
+
+def test_every_target_is_a_real_status():
+    assert all(
+        target in ResourceStatus
+        for targets in ALLOWED_TRANSITIONS.values()
+        for target in targets
+    )
+
+
+def test_assert_can_transition_raises_with_a_useful_message():
+    with pytest.raises(InvalidStateTransition, match=r"approved.*in_review"):
+        assert_can_transition(S.APPROVED, S.IN_REVIEW)
+
+
+def test_all_states_reachable_from_submitted():
+    reachable = {S.SUBMITTED}
+    pending = [S.SUBMITTED]
+    while pending:
+        current = pending.pop()
+        for target in ALLOWED_TRANSITIONS[current] - reachable:
+            reachable.add(target)
+            pending.append(target)
+
+    assert set(ResourceStatus) - TERMINAL_STATES <= reachable
