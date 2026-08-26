@@ -1,0 +1,61 @@
+# Web API
+fastapi
+uvicorn[standard]
+
+# Config / settings
+pydantic-settings
+python-dotenv
+
+# LLM (Gemini free tier) — isolated behind backend/core so the provider can change later
+google-generativeai
+
+# Local, free multilingual embeddings for RAG (no API cost)
+sentence-transformers
+
+# Local, free vector store for retrieval
+chromadb
+
+# Telegram bot channel
+python-telegram-bot
+
+# Testing
+pytest
+httpx
+
+# Optional relational storage (only add sqlalchemy/alembic deps here once backend/alembic is actually used)
+
+# ---------------------------------------------------------------------------
+# Multilingual data pipeline (backend/modules/pipeline)
+#
+# Uncomment per sprint as each adapter is actually built — see that module's
+# README for the build order. Do NOT install all of this on day one: NLLB and
+# Whisper together are several GB, and nothing in Sprint 1 needs them (the
+# skeleton runs on PassthroughTranslator + MemoryQueue + local filesystem).
+# ---------------------------------------------------------------------------
+
+# Sprint 1 — skeleton. Already covered by pydantic-settings/pytest above.
+
+# Sprint 2 — real ingestion (web + PDF), relational state, language detection
+trafilatura         # main-content extraction from HTML (drops nav/boilerplate)
+chardet             # charset fallback when decoding HTML (meta/header both absent)
+# pymupdf             # PDF text-layer extraction
+# sqlalchemy          # repositories; same code path for SQLite (dev) and Postgres (prod)
+# fasttext-wheel      # lid.176 language detection (prebuilt wheels; plain `fasttext` needs a compiler)
+
+# Sprint 3 — translation + review
+# transformers        # NLLB-200 self-hosted MT
+# torch               # NLLB runtime. LARGE (~2GB+). CPU-only build is fine to start.
+# sentencepiece       # NLLB tokenizer
+
+# Sprint 4 — OCR, video/ASR, observability
+# pytesseract         # OCR fallback for scanned PDFs (also needs the Tesseract binary + `swa` language pack)
+# pillow              # image preprocessing before OCR (deskew, binarize)
+# yt-dlp              # video metadata + captions + audio-only download
+# webvtt-py           # caption parsing
+# faster-whisper      # ASR — several times faster than openai-whisper on CPU
+# prometheus-client   # per-stage metrics
+
+# Production only (not needed for the free-tier MVP)
+# boto3               # S3 object storage + SQS queue
+# psycopg[binary]     # PostgreSQL driver
+# opensearch-py       # OpenSearch full-text index

@@ -45,7 +45,7 @@ class SqsQueue(JobQueue):
     def __init__(
         self,
         *,
-        queue_urls: dict[str, str],      # stage name -> queue URL
+        queue_urls: dict[str, str],  # stage name -> queue URL
         dead_letter_url: str,
         region: str,
         visibility_timeout: int = 300,

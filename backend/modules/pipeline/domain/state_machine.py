@@ -42,32 +42,28 @@ ALLOWED_TRANSITIONS: dict[ResourceStatus, frozenset[ResourceStatus]] = {
     # --- ingestion ---
     S.SUBMITTED: frozenset({S.FETCHED, S.DUPLICATE, S.FAILED}),
     S.FETCHED: frozenset({S.EXTRACTED, S.FAILED}),
-
     # --- extraction & normalization ---
-    S.EXTRACTED: frozenset({S.LANGUAGE_DETECTED, S.NEEDS_LANGUAGE_CONFIRMATION, S.FAILED}),
-
+    S.EXTRACTED: frozenset(
+        {S.LANGUAGE_DETECTED, S.NEEDS_LANGUAGE_CONFIRMATION, S.FAILED}
+    ),
     # --- language detection ---
     # A human confirming the language sends it back to LANGUAGE_DETECTED.
     S.NEEDS_LANGUAGE_CONFIRMATION: frozenset({S.LANGUAGE_DETECTED, S.FAILED}),
     # Already-Swahili content skips translation entirely (PDF 3.4) and goes
     # straight to STORED — that is why both arrows exist here.
     S.LANGUAGE_DETECTED: frozenset({S.TRANSLATED, S.STORED, S.FAILED}),
-
     # --- translation & storage ---
     S.TRANSLATED: frozenset({S.STORED, S.FAILED}),
     S.STORED: frozenset({S.IN_REVIEW, S.FAILED}),
-
     # --- human review loop ---
     S.IN_REVIEW: frozenset({S.APPROVED, S.NEEDS_EDIT, S.FAILED}),
     S.NEEDS_EDIT: frozenset({S.EDITED, S.FAILED}),
     S.EDITED: frozenset({S.APPROVED, S.NEEDS_EDIT, S.FAILED}),
-
     # --- publication ---
     # The compliance gate runs on the approved -> published edge, which is why
     # BLOCKED_LICENSING is reachable only from here (PDF section 4: gate before
     # publication, not before translation).
     S.APPROVED: frozenset({S.PUBLISHED, S.BLOCKED_LICENSING}),
-
     # --- terminal states: no way out ---
     S.PUBLISHED: frozenset(),
     S.DUPLICATE: frozenset(),
