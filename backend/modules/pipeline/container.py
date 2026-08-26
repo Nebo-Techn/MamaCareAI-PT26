@@ -90,6 +90,7 @@ class Container:
             valid = ", ".join(stages)
             raise ValueError(f"Unknown pipeline stage {name!r}. Valid stages: {valid}") from exc
 
+
 def build_queue(settings: PipelineSettings) -> JobQueue:
     if settings.queue_backend == "memory":
         from .adapters.queue.memory_queue import MemoryQueue

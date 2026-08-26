@@ -38,7 +38,7 @@ class Chunk:
     """
 
     text: str
-    block_orders: tuple[int, ...]   # source TextBlock.order values in this chunk
+    block_orders: tuple[int, ...]  # source TextBlock.order values in this chunk
 
 
 class Chunker:
@@ -52,7 +52,9 @@ class Chunker:
         # look similar and want opposite things.
         self._overlap_chars = overlap_chars
 
-    def chunk(self, blocks: tuple[TextBlock, ...], *, max_chars: int | None = None) -> list[Chunk]:
+    def chunk(
+        self, blocks: tuple[TextBlock, ...], *, max_chars: int | None = None
+    ) -> list[Chunk]:
         """Group blocks into chunks under the engine's character limit.
 
         TODO (junior dev) — implement in this order:
@@ -87,7 +89,10 @@ class Chunker:
         raise NotImplementedError
 
     def reassemble(
-        self, blocks: tuple[TextBlock, ...], chunks: list[Chunk], translations: list[str]
+        self,
+        blocks: tuple[TextBlock, ...],
+        chunks: list[Chunk],
+        translations: list[str],
     ) -> list[tuple[int, str]]:
         """Map translated chunks back onto source block orders.
 

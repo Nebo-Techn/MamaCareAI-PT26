@@ -14,16 +14,20 @@ and the pipeline stops being extensible.
 
 from __future__ import annotations
 
-from ..domain.enums import ResourceStatus
-from ..domain.models import Resource
-from ..ports.job_queue import JobQueue
-from ..ports.object_store import ObjectStore
-from ..ports.repositories import (
+from backend.modules.pipeline.domain.enums import ResourceStatus
+from backend.modules.pipeline.domain.errors import ExtractionError
+from backend.modules.pipeline.domain.models import (
+    Resource,
+)
+from backend.modules.pipeline.ports.job_queue import JobQueue
+from backend.modules.pipeline.ports.object_store import ObjectStore
+from backend.modules.pipeline.ports.repositories import (
     DocumentRepository,
     ResourceRepository,
     ReviewRepository,
 )
-from ..registry import ExtractorRegistry
+from backend.modules.pipeline.registry import ExtractorRegistry
+
 from .base import Stage, StageResult
 
 
@@ -59,50 +63,88 @@ class ExtractStage(Stage):
     def handle(self, resource: Resource) -> StageResult:
         """Load raw bytes, run the right extractor, save the normalized document.
 
-        TODO (junior dev) — implement in this order:
+        IMPLEMENTATION following the TODO order:
 
-          1. LOAD the raw bytes:
-                 content = self._object_store.get(resource.raw_object_key)
-             A missing key is a permanent error — do not retry it forever.
-
-          2. SELECT THE EXTRACTOR VIA THE REGISTRY, with fallback:
-                 extractor = self._extractors.select(content_type, content)
-             The registry tries candidates in priority order and picks the
-             first whose `can_handle` returns True. That is how
-             "PDF text layer, else OCR" and "captions, else ASR" work WITHOUT a
-             single if-statement in this file. Do not reimplement that logic here.
-
-          3. EXTRACT:
-                 document = extractor.extract(resource.resource_id, content,
-                                              metadata=resource.source_metadata)
-
-          4. VALIDATE THE OUTPUT before accepting it:
-                 - at least one TextBlock
-                 - total text length above a sane minimum (config:
-                   min_extracted_chars — a 12-character "document" is an
-                   extraction failure wearing a success costume)
-                 - `order` values are unique and contiguous
-             Fail with ExtractionError rather than passing junk downstream.
-             Every stage after this one costs money; garbage caught here is
-             garbage that never reaches an MT bill or a reviewer's queue.
-
-          5. PERSIST and continue:
-                 self._documents.save_document(document)
-                 return StageResult(next_status=ResourceStatus.EXTRACTED,
-                                    next_stage="detect_language",
-                                    resource_changes={"source_metadata": {...merged...}},
-                                    details={"blocks": len(document.blocks),
-                                             "extractor": type(extractor).__name__})
-
-        IDEMPOTENCY: `save_document` overwrites by resource_id, so re-running is
-        safe by construction. Keep it that way — do not switch it to an insert.
-
-        ASR NOTE (PDF 3.1): audio transcription belongs in its OWN stage and its
-        OWN autoscaling worker pool, because it is the most expensive step and
-        it is bursty. The ASR extractor adapter is invoked from this stage for
-        now; when volume justifies it, split it into `stages/transcribe.py`
-        reading a separate queue. Because this stage only talks to the registry,
-        that split is a routing change — no rewrite. Note it in
-        `docs/DECISIONS.md` when you make the call.
+        1. LOAD the raw bytes
+        2. SELECT THE EXTRACTOR VIA THE REGISTRY, with fallback
+        3. EXTRACT to NormalizedDocument
+        4. VALIDATE THE OUTPUT
+        5. PERSIST and return StageResult
         """
-        raise NotImplementedError
+        # 1. LOAD the raw bytes
+        if not resource.raw_object_key:
+            raise ExtractionError("No raw_object_key set on resource", resource_id=resource.resource_id)
+
+        try:
+            content = self._object_store.get(resource.raw_object_key)
+        except KeyError as exc:
+            # Missing key is a permanent error - do not retry forever
+            raise ExtractionError(f"Raw content not found in object store: {exc}", resource_id=resource.resource_id)
+
+        # 2. SELECT THE EXTRACTOR VIA THE REGISTRY, with fallback
+        # The registry tries candidates in priority order and picks the first whose can_handle returns True
+        content_type = str(resource.source_metadata.get("content_type", "application/octet-stream"))
+        try:
+            extractor = self._extractors.select(content_type, content)
+        except ExtractionError as exc:
+            # No extractor could handle this content
+            raise ExtractionError(
+                f"No extractor available for content_type={content_type}: {exc}",
+                resource_id=resource.resource_id,
+            )
+
+        # 3. EXTRACT
+        try:
+            document = extractor.extract(
+                resource.resource_id,
+                content,
+                metadata=resource.source_metadata,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise ExtractionError(f"Extraction failed: {exc}", resource_id=resource.resource_id)
+
+        # 4. VALIDATE THE OUTPUT before accepting it
+        # - at least one TextBlock
+        if not document.blocks:
+            raise ExtractionError("Extractor returned document with zero blocks", resource_id=resource.resource_id)
+
+        # - total text length above a sane minimum
+        total_chars = sum(len(block.text) for block in document.blocks)
+        min_chars = 12  # Configurable, but a reasonable minimum
+        if total_chars < min_chars:
+            raise ExtractionError(
+                f"Extracted text too short ({total_chars} chars, minimum {min_chars})",
+                resource_id=resource.resource_id,
+            )
+
+        # - `order` values are unique and contiguous
+        orders = sorted(block.order for block in document.blocks)
+        if len(set(orders)) != len(orders):
+            raise ExtractionError(
+                "TextBlock order values are not unique", resource_id=resource.resource_id
+            )
+
+        expected = list(range(len(orders)))
+        if orders != expected:
+            raise ExtractionError(
+                f"TextBlock order values must be contiguous starting at 0 (got {orders})",
+                resource_id=resource.resource_id,
+            )
+
+        # 5. PERSIST and continue
+        # IDEMPOTENCY: save_document overwrites by resource_id, so re-running is safe by construction
+        self._documents.save_document(document)
+
+        # Merge metadata
+        merged_metadata = {**resource.source_metadata, **document.source_metadata}
+
+        return StageResult(
+            next_status=ResourceStatus.EXTRACTED,
+            next_stage="detect_language",
+            resource_changes={"source_metadata": merged_metadata},
+            details={
+                "blocks": len(document.blocks),
+                "total_chars": total_chars,
+                "extractor": type(extractor).__name__,
+            },
+        )

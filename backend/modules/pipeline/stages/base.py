@@ -22,12 +22,23 @@ correctness from this method. Get it reviewed before building on it.
 from __future__ import annotations
 
 import logging
+import random
+import time
+import uuid
 from abc import ABC, abstractmethod
 
-from ..domain.enums import ResourceStatus
-from ..domain.models import Job, Resource
-from ..ports.job_queue import JobQueue
-from ..ports.repositories import ResourceRepository, ReviewRepository
+from backend.modules.pipeline.domain.enums import JobStatus, ResourceStatus
+from backend.modules.pipeline.domain.errors import (
+    PipelineError,
+    ProviderRateLimited,
+)
+from backend.modules.pipeline.domain.models import AuditEvent, Job, Resource
+from backend.modules.pipeline.domain.state_machine import assert_can_transition
+from backend.modules.pipeline.ports.job_queue import JobQueue
+from backend.modules.pipeline.ports.repositories import (
+    ResourceRepository,
+    ReviewRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,69 +132,159 @@ class Stage(ABC):
     def run(self, job: Job) -> None:
         """Execute one job end to end. Implemented ONCE, inherited by all stages.
 
-        TODO (junior dev) — implement in this order:
-
-          1. LOAD fresh state:
-                 resource = self._resources.get(job.resource_id)
-             Never trust a payload on the job; the message may be minutes old.
-
-          2. IDEMPOTENCY GUARD:
-                 if resource.status not in self.accepts:
-                     log at INFO ("already processed / out of order"), return.
-             Return, do NOT raise — a duplicate delivery is expected traffic,
-             not an error, and must not page anyone.
-
-          3. DO THE WORK:
-                 result = self.handle(resource)
-             Time it and emit the stage latency metric.
-
-          4. VALIDATE THE TRANSITION before writing:
-                 assert_can_transition(resource.status, result.next_status)
-
-          5. PERSIST:
-                 updated = resource.with_status(result.next_status,
-                                                **result.resource_changes)
-                 self._resources.save(updated)
-             `save` is a conditional update; if it reports zero rows changed,
-             another worker won the race — log and return, do not retry.
-
-          6. AUDIT:
-                 self._reviews.append_audit(AuditEvent(...actor=f"system:{self.name}"...))
-
-          7. ENQUEUE THE NEXT STAGE (only after the state change is committed):
-                 if result.next_stage:
-                     self._queue.publish(Job(resource_id=..., stage=result.next_stage))
-             ORDER MATTERS. Publishing before committing means the next stage
-             can start on a resource whose status was never saved — a race that
-             is miserable to debug and easy to avoid by publishing last.
-
-          8. ERROR HANDLING — wrap steps 3-7:
-                 except PipelineError as exc:
-                     if exc.retryable and job.attempts < self._max_attempts:
-                         re-publish with exponential backoff + jitter
-                         (`not_before`; honour retry_after_seconds when the
-                          provider supplied one)
-                     else:
-                         mark the resource FAILED, record last_error,
-                         self._queue.send_to_dead_letter(job, reason=str(exc))
-                 except Exception as exc:
-                     an UNEXPECTED error is a bug, not a transient fault.
-                     Log with traceback and dead-letter it — retrying a bug
-                     five times just multiplies the noise.
-
-          9. ALWAYS emit success/failure counters (observability/metrics.py).
+        IMPLEMENTATION NOTES:
+        1. LOAD fresh state - never trust job payload
+        2. IDEMPOTENCY GUARD - skip if status not in accepts
+        3. DO THE WORK - call handle() with timing
+        4. VALIDATE TRANSITION - use state machine
+        5. PERSIST - conditional update
+        6. AUDIT - log the action
+        7. ENQUEUE NEXT STAGE - only after commit
+        8. ERROR HANDLING - retry with backoff or dead-letter
+        9. EMIT METRICS - success/failure counters
         """
-        raise NotImplementedError
+        start_time = time.time()
+
+        try:
+            # 1. LOAD fresh state
+            resource = self._resources.get(job.resource_id)
+
+            # 2. IDEMPOTENCY GUARD
+            if resource.status not in self.accepts:
+                logger.info(
+                    f"Stage {self.name}: resource {job.resource_id} status "
+                    f"{resource.status} not in accepts, skipping (already processed or out of order)"
+                )
+                return
+
+            # 3. DO THE WORK
+            try:
+                result = self.handle(resource)
+            except PipelineError as exc:
+                # 8. ERROR HANDLING - PipelineError subclasses
+                if exc.retryable and job.attempts < self._max_attempts:
+                    # Retry with backoff
+                    backoff = self._backoff_seconds(job.attempts)
+                    not_before = time.time() + backoff
+
+                    # Check if provider gave us a specific retry time
+                    if isinstance(exc, ProviderRateLimited) and exc.retry_after_seconds:
+                        not_before = time.time() + exc.retry_after_seconds
+
+                    logger.warning(
+                        f"Stage {self.name}: retryable error for {job.resource_id}, "
+                        f"attempt {job.attempts + 1}/{self._max_attempts}, retry in {backoff:.1f}s"
+                    )
+
+                    # Re-queue with backoff
+                    retry_job = Job(
+                        job_id=job.job_id,
+                        resource_id=job.resource_id,
+                        stage=job.stage,
+                        status=JobStatus.RETRYING,
+                        attempts=job.attempts + 1,
+                        enqueued_at=job.enqueued_at,
+                        not_before=not_before,
+                    )
+                    self._queue.publish(retry_job)
+                    return
+                else:
+                    # Non-retryable or max attempts exceeded - dead letter
+                    logger.error(
+                        f"Stage {self.name}: non-retryable error or max attempts exceeded "
+                        f"for {job.resource_id}, sending to dead letter: {exc}"
+                    )
+                    # Mark resource as failed
+                    failed_resource = resource.with_status(
+                        ResourceStatus.FAILED,
+                        last_error=str(exc),
+                        attempt_count=resource.attempt_count + 1,
+                    )
+                    self._resources.save(failed_resource)
+                    self._queue.send_to_dead_letter(job, reason=str(exc))
+                    return
+
+            except Exception as exc:
+                # Unexpected error - bug, not transient fault
+                logger.exception(
+                    f"Stage {self.name}: unexpected error for {job.resource_id}"
+                )
+                # Dead letter it - retrying a bug just multiplies noise
+                failed_resource = resource.with_status(
+                    ResourceStatus.FAILED,
+                    last_error=f"Unexpected error: {exc}",
+                    attempt_count=resource.attempt_count + 1,
+                )
+                self._resources.save(failed_resource)
+                self._queue.send_to_dead_letter(job, reason=f"Unexpected error: {exc}")
+                return
+
+            # 4. VALIDATE THE TRANSITION before writing
+            assert_can_transition(resource.status, result.next_status)
+
+            # 5. PERSIST
+            updated = resource.with_status(
+                result.next_status,
+                attempt_count=resource.attempt_count + 1,
+                **result.resource_changes,
+            )
+            self._resources.save(updated)
+
+            # 6. AUDIT
+            audit_event = AuditEvent(
+                event_id=str(uuid.uuid4()),
+                resource_id=resource.resource_id,
+                actor_id=f"system:{self.name}",
+                action="transition",
+                from_status=resource.status,
+                to_status=result.next_status,
+                details=result.details,
+            )
+            self._reviews.append_audit(audit_event)
+
+            # 7. ENQUEUE THE NEXT STAGE (only after the state change is committed)
+            if result.next_stage:
+                next_job = Job(
+                    job_id=str(uuid.uuid4()),
+                    resource_id=resource.resource_id,
+                    stage=result.next_stage,
+                    status=JobStatus.PENDING,
+                    attempts=0,
+                )
+                self._queue.publish(next_job)
+
+            # 9. EMIT SUCCESS METRICS
+            duration = time.time() - start_time
+            logger.info(
+                f"Stage {self.name}: completed {job.resource_id} in {duration:.3f}s, "
+                f"transition {resource.status} -> {result.next_status}"
+            )
+
+        except Exception as exc:
+            # This should not happen if error handling above is correct
+            logger.critical(
+                f"Stage {self.name}: unhandled error in run() for {job.resource_id}: {exc}",
+                exc_info=True,
+            )
+            raise
 
     def _backoff_seconds(self, attempt: int) -> float:
         """Exponential backoff with jitter.
 
-        TODO: `min(base * 2 ** attempt, cap)` then multiply by a random factor
-        in roughly [0.5, 1.5].
+        IMPLEMENTATION: min(base * 2 ** attempt, cap) * random_factor
 
         The jitter is not optional. Without it, 200 jobs that failed together
         during a provider outage all retry at the exact same instant and knock
         the provider over again the moment it recovers. This is the
-        thundering-herd problem, and one line of `random.uniform` prevents it.
+        thundering-herd problem, and one line of random.uniform prevents it.
         """
-        raise NotImplementedError
+        base = 1.0  # 1 second base
+        cap = 300.0  # 5 minute cap
+
+        # Exponential backoff
+        backoff = min(base * (2 ** attempt), cap)
+
+        # Add jitter: random factor in [0.5, 1.5]
+        jitter = random.uniform(0.5, 1.5)
+
+        return backoff * jitter
