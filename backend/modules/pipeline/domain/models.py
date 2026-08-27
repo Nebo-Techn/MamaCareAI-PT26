@@ -45,7 +45,7 @@ def utc_now() -> datetime:
 
     TODO: tests should inject a fixed clock rather than patching this globally.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)

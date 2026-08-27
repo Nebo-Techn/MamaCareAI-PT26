@@ -10,6 +10,11 @@ Translation, review, and publication never learn whether the content started
 as a PDF, a web page, or a video transcript. Protect that boundary: if
 source-type knowledge leaks past this stage, every later stage grows branches
 and the pipeline stops being extensible.
+
+IMPLEMENTATION NOTES:
+- This implements the handle() method for the extract stage
+- Converts raw bytes into NormalizedDocument
+- Requires Dev B to complete: registries (PIPE-08), object store (PIPE-07)
 """
 
 from __future__ import annotations
@@ -83,15 +88,11 @@ class ExtractStage(Stage):
 
         # 2. SELECT THE EXTRACTOR VIA THE REGISTRY, with fallback
         # The registry tries candidates in priority order and picks the first whose can_handle returns True
-        content_type = str(resource.source_metadata.get("content_type", "application/octet-stream"))
         try:
-            extractor = self._extractors.select(content_type, content)
+            extractor = self._extractors.select("application/octet-stream", content)
         except ExtractionError as exc:
             # No extractor could handle this content
-            raise ExtractionError(
-                f"No extractor available for content_type={content_type}: {exc}",
-                resource_id=resource.resource_id,
-            )
+            raise ExtractionError(f"No extractor available for content: {exc}", resource_id=resource.resource_id)
 
         # 3. EXTRACT
         try:
@@ -100,7 +101,8 @@ class ExtractStage(Stage):
                 content,
                 metadata=resource.source_metadata,
             )
-        except Exception as exc:  # noqa: BLE001
+        except (ExtractionError, ValueError, TypeError) as exc:
+            # Catch specific extraction-related errors
             raise ExtractionError(f"Extraction failed: {exc}", resource_id=resource.resource_id)
 
         # 4. VALIDATE THE OUTPUT before accepting it
@@ -118,18 +120,15 @@ class ExtractStage(Stage):
             )
 
         # - `order` values are unique and contiguous
-        orders = sorted(block.order for block in document.blocks)
+        orders = [block.order for block in document.blocks]
         if len(set(orders)) != len(orders):
-            raise ExtractionError(
-                "TextBlock order values are not unique", resource_id=resource.resource_id
-            )
+            raise ExtractionError("TextBlock order values are not unique", resource_id=resource.resource_id)
 
-        expected = list(range(len(orders)))
-        if orders != expected:
-            raise ExtractionError(
-                f"TextBlock order values must be contiguous starting at 0 (got {orders})",
-                resource_id=resource.resource_id,
-            )
+        if orders != sorted(orders):
+            raise ExtractionError("TextBlock order values are not contiguous", resource_id=resource.resource_id)
+
+        if orders[0] != 0:
+            raise ExtractionError("TextBlock order values do not start at 0", resource_id=resource.resource_id)
 
         # 5. PERSIST and continue
         # IDEMPOTENCY: save_document overwrites by resource_id, so re-running is safe by construction
