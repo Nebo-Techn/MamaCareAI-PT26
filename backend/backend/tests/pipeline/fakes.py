@@ -68,7 +68,7 @@ from __future__ import annotations
 #       means editing forty tests. With them, it means editing one function.
 # ---------------------------------------------------------------------------
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.modules.pipeline.domain.enums import (
     ResourceStatus,
@@ -105,7 +105,7 @@ from backend.modules.pipeline.ports.translator import Translator
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
