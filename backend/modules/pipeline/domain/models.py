@@ -25,7 +25,7 @@ TODO (junior dev):
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .enums import (
     JobStatus,
