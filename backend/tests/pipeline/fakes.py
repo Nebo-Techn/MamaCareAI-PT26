@@ -1,30 +1,14 @@
 """
 In-memory fakes for every port.
 
-THIS FILE IS WHY THE PORTS LAYER EARNS ITS KEEP.
-With these, every stage test runs with no network, no database, no API key, no
-model download, and no GPU — in milliseconds. Write these EARLY, before the
-real adapters. They are what make the stages testable while the real adapters
-are still being built, so two trainees can work on a stage and its adapter in
-parallel without blocking each other.
+This file provides fake implementations for testing pipeline stages without requiring
+network, database, API keys, model downloads, or GPU.
 
-FAKES, NOT MOCKS. A fake is a real working implementation with a simple
-backing store (a dict, a list). A mock asserts on calls. Prefer fakes: they let
-tests assert on OUTCOMES ("the resource ended up PUBLISHED") rather than on
-INTERACTIONS ("save was called twice"). Interaction tests break every time you
-refactor, even when the behaviour is still correct — and then people stop
-trusting the test suite.
-
-THE ONE RULE: a fake must honour its port's contract exactly. A fake translator
-that returns a different number of results than it was given makes a broken
-stage pass its tests, which is worse than having no test at all.
 """
 
 from __future__ import annotations
 
 import uuid
-from contextlib import nullcontext  # noqa: F401
-from dataclasses import replace
 from datetime import UTC, datetime
 
 from backend.modules.pipeline.domain.enums import (
@@ -49,9 +33,7 @@ from backend.modules.pipeline.ports.deduplicator import Deduplicator
 from backend.modules.pipeline.ports.extractor import ContentExtractor
 from backend.modules.pipeline.ports.fetcher import FetchResult, SourceFetcher
 from backend.modules.pipeline.ports.job_queue import JobQueue
-from backend.modules.pipeline.ports.language_detector import (
-    LanguageDetector,
-)
+from backend.modules.pipeline.ports.language_detector import LanguageDetector
 from backend.modules.pipeline.ports.object_store import ObjectStore
 from backend.modules.pipeline.ports.repositories import (
     DocumentRepository,
@@ -79,22 +61,10 @@ class FakeResourceRepository(ResourceRepository):
         self._resources: dict[str, Resource] = {}
         self._versions: dict[str, int] = {}  # Track version for conditional updates
 
-    def add(self, resource: Resource) -> None:
-        if resource.resource_id in self._resources:
-            raise ValueError(f"Resource {resource.resource_id} already exists")
-        self._resources[resource.resource_id] = resource
-        self._versions[resource.resource_id] = 1
-
     def get(self, resource_id: str) -> Resource:
         if resource_id not in self._resources:
             raise KeyError(f"Resource {resource_id} not found")
         return self._resources[resource_id]
-
-    def find_by_content_hash(self, content_hash: str) -> Resource | None:
-        for resource in self._resources.values():
-            if resource.content_hash == content_hash:
-                return resource
-        return None
 
     def save(self, resource: Resource) -> None:
         """Simulate conditional update - raises if version mismatch."""
@@ -111,12 +81,6 @@ class FakeResourceRepository(ResourceRepository):
 
         self._resources[resource.resource_id] = resource
         self._versions[resource.resource_id] = expected_version
-
-    def list_by_status(
-        self, status: ResourceStatus, *, limit: int = 100, offset: int = 0
-    ) -> list[Resource]:
-        matching = [resource for resource in self._resources.values() if resource.status == status]
-        return matching[offset : offset + limit]
 
 
 class FakeDocumentRepository(DocumentRepository):
@@ -180,18 +144,9 @@ class FakeReviewRepository(ReviewRepository):
         self._assignments: dict[str, ReviewAssignment] = {}
         self._audit_events: list[AuditEvent] = []
 
-    def create_assignment(self, assignment: ReviewAssignment) -> None:
-        self._assignments[assignment.assignment_id] = assignment
-
-    def get_assignment(self, assignment_id: str) -> ReviewAssignment:
-        if assignment_id not in self._assignments:
-            raise KeyError(f"Assignment {assignment_id} not found")
-        return self._assignments[assignment_id]
-
-    def claim_next(self, reviewer_id: str) -> ReviewAssignment | None:
-        _ = reviewer_id
+    def get_assignment(self, resource_id: str) -> ReviewAssignment | None:
         for assignment in self._assignments.values():
-            if assignment.reviewer_id is None:
+            if assignment.resource_id == resource_id:
                 return assignment
         return None
 
@@ -201,7 +156,7 @@ class FakeReviewRepository(ReviewRepository):
     def append_audit(self, event: AuditEvent) -> None:
         self._audit_events.append(event)
 
-    def list_audit(self, resource_id: str) -> list[AuditEvent]:
+    def get_audit_trail(self, resource_id: str) -> list[AuditEvent]:
         return [e for e in self._audit_events if e.resource_id == resource_id]
 
 
@@ -241,32 +196,24 @@ class FakeJobQueue(JobQueue):
             self._queues[stage] = []
         self._queues[stage].append(job)
 
-    def consume(self, stage: str, *, max_messages: int = 1):
-        queue = self._queues.get(stage, [])
-        count = min(max_messages, len(queue))
-        for _ in range(count):
-            job = queue[0]
-
-            class _Handle:
-                def __enter__(self):
-                    return job  # noqa: B023
-
-                def __exit__(self, exc_type, exc, tb):
-                    # ACK on success by removing the message; on exception leave it for redelivery.
-                    if exc_type is None:
-                        queue.pop(0)
-                    return False
-
-            yield _Handle()
-    def depth(self, stage: str) -> int:
-        return len(self._queues.get(stage, []))
-
     def claim_next(self, stage: str) -> Job | None:
+        """Simple claim method for testing - returns next available job or None."""
         if stage not in self._queues or not self._queues[stage]:
             return None
         return self._queues[stage].pop(0)
 
-    def send_to_dead_letter(self, job: Job, reason: str) -> None:
+    def consume(self, stage: str, *, max_messages: int = 1):
+        """Simple consume for testing - yields jobs directly."""
+        for _ in range(max_messages):
+            job = self.claim_next(stage)
+            if job is None:
+                break
+            yield job
+
+    def depth(self, stage: str) -> int:
+        return len(self._queues.get(stage, []))
+
+    def send_to_dead_letter(self, job: Job, *, reason: str) -> None:
         self._dead_letter.append((job, reason))
 
     def get_queue_size(self, stage: str) -> int:
@@ -310,12 +257,17 @@ class FakeDeduplicator(Deduplicator):
     def __init__(self) -> None:
         self._hashes: set[str] = set()
 
-    def compute_hash(self, source_url: str, content: bytes) -> str:
+    def compute_hash(self, source_url: str, content: bytes | str) -> str:
         import hashlib
 
         hasher = hashlib.sha256()
         hasher.update(source_url.encode())
-        hasher.update(content)
+
+        if isinstance(content, bytes):
+            hasher.update(content)
+        else:
+            hasher.update(content.encode("utf-8"))
+
         return hasher.hexdigest()
 
     def is_duplicate(self, content_hash: str) -> bool:
@@ -395,7 +347,7 @@ class FakeExtractor(ContentExtractor):
         self, resource_id: str, content: bytes, *, metadata: dict
     ) -> NormalizedDocument:
         if self._document:
-            return replace(self._document, resource_id=resource_id)
+            return self._document
 
         # Default simple document if none provided
         return NormalizedDocument(
@@ -410,13 +362,18 @@ class FakeExtractor(ContentExtractor):
             source_metadata=metadata,
         )
 
+
 # ---------------------------------------------------------------------------
-# MOCK REGISTRIES (for Dev A's testing only - don't modify actual registry.py)
+# MOCK REGISTRIES (DEPRECATED - Use actual registries from repository now)
 # ---------------------------------------------------------------------------
+
+# NOTE: The actual registries are now available in backend/modules/pipeline/registry.py
+# Use FetcherRegistry and ExtractorRegistry instead of these mock versions
+# These are kept here for reference only
 
 
 class MockFetcherRegistry:
-    """Mock fetcher registry for Dev A's testing - simulates FetcherRegistry behavior."""
+    """Mock fetcher registry for Dev A's testing - DEPRECATED, use FetcherRegistry instead."""
 
     def __init__(self) -> None:
         self._fetchers: dict[SourceType, SourceFetcher] = {}
@@ -434,7 +391,7 @@ class MockFetcherRegistry:
 
 
 class MockExtractorRegistry:
-    """Mock extractor registry for Dev A's testing - simulates ExtractorRegistry behavior."""
+    """Mock extractor registry for Dev A's testing - DEPRECATED, use ExtractorRegistry instead."""
 
     def __init__(self) -> None:
         self._extractors: list[tuple[int, ContentExtractor]] = []
@@ -474,7 +431,6 @@ class MockDeduplicator(Deduplicator):
             return True
         self._hashes.add(content_hash)
         return False
-
 
 
 # ---------------------------------------------------------------------------

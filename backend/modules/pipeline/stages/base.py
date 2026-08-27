@@ -15,8 +15,11 @@ only. When you need to change retry policy, you change it here, once.
 This is also Open/Closed at the stage level: new stage = new subclass, no edits
 to the runner or the worker.
 
-TODO (junior dev): implement `run()` carefully — every other stage inherits its
-correctness from this method. Get it reviewed before building on it.
+IMPLEMENTATION NOTES:
+- This implements the template method pattern
+- Every stage inherits from this and only needs to implement the abstract methods
+- The run() method handles all the plumbing (loading, validation, persistence, error handling)
+- Requires Abdillah's technical lead review before merging
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ from backend.modules.pipeline.domain.errors import (
     ProviderRateLimited,
 )
 from backend.modules.pipeline.domain.models import AuditEvent, Job, Resource
+
+# Use the actual state machine from repository (it's now implemented)
 from backend.modules.pipeline.domain.state_machine import assert_can_transition
 from backend.modules.pipeline.ports.job_queue import JobQueue
 from backend.modules.pipeline.ports.repositories import (
@@ -207,7 +212,7 @@ class Stage(ABC):
             except Exception as exc:
                 # Unexpected error - bug, not transient fault
                 logger.exception(
-                    f"Stage {self.name}: unexpected error for {job.resource_id}"
+                    f"Stage {self.name}: unexpected error for {job.resource_id}",
                 )
                 # Dead letter it - retrying a bug just multiplies noise
                 failed_resource = resource.with_status(

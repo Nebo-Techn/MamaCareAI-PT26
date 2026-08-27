@@ -13,6 +13,11 @@ MAMACARE-SPECIFIC RULE (docs/ARCHITECTURE.md non-negotiable #4):
 Ingestion never starts from a URL that has not been vetted. Every resource
 must already have a row in `data/01_source_register` with a vetting decision.
 Enforce that in `submit()` — see `services/submission.py`.
+
+IMPLEMENTATION NOTES:
+- This implements the handle() method for the ingest stage
+- Fetches raw content, dedups it, and stores in object storage
+- Requires Dev B to complete: registries (PIPE-08), queue (PIPE-06), object store (PIPE-07)
 """
 
 from __future__ import annotations
@@ -101,19 +106,17 @@ class IngestStage(Stage):
         # 2. PICK THE FETCHER by source type
         try:
             fetcher = self._fetchers.get(resource.source_type)
-        except UnsupportedSourceType as exc:
+        except UnsupportedSourceType:
             # Permanent error - no fetcher for this type
-            raise UnsupportedSourceType(
-                f"No fetcher registered for source type {resource.source_type}",
-                resource_id=resource.resource_id,
-            ) from exc
+            raise FetchError(f"No fetcher registered for source type {resource.source_type}", resource_id=resource.resource_id)
+
         # 3. FETCH
         try:
             result = fetcher.fetch(resource.source_url)
         except FetchError:
             # Transient failures - let base class retry
             raise
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError, TypeError) as exc:
             # Other fetch errors - treat as fetch error
             raise FetchError(f"Fetch failed: {exc}", resource_id=resource.resource_id)
 
