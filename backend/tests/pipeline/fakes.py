@@ -60,11 +60,25 @@ class FakeResourceRepository(ResourceRepository):
     def __init__(self) -> None:
         self._resources: dict[str, Resource] = {}
         self._versions: dict[str, int] = {}  # Track version for conditional updates
+        self._content_hashes: dict[str, Resource] = {}  # For dedup lookup
+
+    def add(self, resource: Resource) -> None:
+        """Insert a new resource. Raise if the resource_id already exists."""
+        if resource.resource_id in self._resources:
+            raise KeyError(f"Resource {resource.resource_id} already exists")
+        self._resources[resource.resource_id] = resource
+        self._versions[resource.resource_id] = 1
+        if resource.content_hash:
+            self._content_hashes[resource.content_hash] = resource
 
     def get(self, resource_id: str) -> Resource:
         if resource_id not in self._resources:
             raise KeyError(f"Resource {resource_id} not found")
         return self._resources[resource_id]
+
+    def find_by_content_hash(self, content_hash: str) -> Resource | None:
+        """Dedup lookup - return None when the hash is new."""
+        return self._content_hashes.get(content_hash)
 
     def save(self, resource: Resource) -> None:
         """Simulate conditional update - raises if version mismatch."""
@@ -81,6 +95,17 @@ class FakeResourceRepository(ResourceRepository):
 
         self._resources[resource.resource_id] = resource
         self._versions[resource.resource_id] = expected_version
+        if resource.content_hash:
+            self._content_hashes[resource.content_hash] = resource
+
+    def list_by_status(
+        self, status: ResourceStatus, *, limit: int = 100, offset: int = 0
+    ) -> list[Resource]:
+        """Page through resources in a given state."""
+        matching = [
+            r for r in self._resources.values() if r.status == status
+        ]
+        return matching[offset:offset + limit]
 
 
 class FakeDocumentRepository(DocumentRepository):
@@ -105,13 +130,6 @@ class FakeVersionRepository(VersionRepository):
         self._versions: dict[str, list[ContentVersion]] = {}
         self._version_counters: dict[str, int] = {}
 
-    def get_versions(self, resource_id: str) -> list[ContentVersion]:
-        return self._versions.get(resource_id, [])
-
-    def get_latest(self, resource_id: str) -> ContentVersion | None:
-        versions = self.get_versions(resource_id)
-        return versions[-1] if versions else None
-
     def save_version(self, version: ContentVersion) -> None:
         if version.resource_id not in self._versions:
             self._versions[version.resource_id] = []
@@ -128,13 +146,26 @@ class FakeVersionRepository(VersionRepository):
             version_number=counter,
             author_kind=version.author_kind,
             author_id=version.author_id,
-            units=version.units,
             created_at=version.created_at,
+            units=version.units,
             engine=version.engine,
             note=version.note,
         )
-
         self._versions[version.resource_id].append(updated_version)
+
+    def get_latest(self, resource_id: str) -> ContentVersion | None:
+        versions = self._versions.get(resource_id, [])
+        return versions[-1] if versions else None
+
+    def get_machine_version(self, resource_id: str) -> ContentVersion | None:
+        versions = self._versions.get(resource_id, [])
+        for version in versions:
+            if version.author_kind.value == "machine":
+                return version
+        return None
+
+    def list_versions(self, resource_id: str) -> list[ContentVersion]:
+        return self._versions.get(resource_id, [])
 
 
 class FakeReviewRepository(ReviewRepository):
@@ -144,9 +175,18 @@ class FakeReviewRepository(ReviewRepository):
         self._assignments: dict[str, ReviewAssignment] = {}
         self._audit_events: list[AuditEvent] = []
 
-    def get_assignment(self, resource_id: str) -> ReviewAssignment | None:
+    def create_assignment(self, assignment: ReviewAssignment) -> None:
+        self._assignments[assignment.assignment_id] = assignment
+
+    def get_assignment(self, assignment_id: str) -> ReviewAssignment:
+        if assignment_id not in self._assignments:
+            raise KeyError(f"Assignment {assignment_id} not found")
+        return self._assignments[assignment_id]
+
+    def claim_next(self, reviewer_id: str) -> ReviewAssignment | None:
         for assignment in self._assignments.values():
-            if assignment.resource_id == resource_id:
+            if assignment.reviewer_id is None and assignment.completed_at is None:
+                assignment.reviewer_id = reviewer_id
                 return assignment
         return None
 
@@ -156,7 +196,7 @@ class FakeReviewRepository(ReviewRepository):
     def append_audit(self, event: AuditEvent) -> None:
         self._audit_events.append(event)
 
-    def get_audit_trail(self, resource_id: str) -> list[AuditEvent]:
+    def list_audit(self, resource_id: str) -> list[AuditEvent]:
         return [e for e in self._audit_events if e.resource_id == resource_id]
 
 
@@ -347,7 +387,9 @@ class FakeExtractor(ContentExtractor):
         self, resource_id: str, content: bytes, *, metadata: dict
     ) -> NormalizedDocument:
         if self._document:
-            return self._document
+            # Set the resource_id on the document
+            from dataclasses import replace
+            return replace(self._document, resource_id=resource_id)
 
         # Default simple document if none provided
         return NormalizedDocument(
