@@ -25,7 +25,7 @@ from __future__ import annotations
 import uuid
 from contextlib import nullcontext  # noqa: F401
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.modules.pipeline.domain.enums import (
     ResourceStatus,
@@ -64,7 +64,7 @@ from backend.modules.pipeline.ports.translator import Translator
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
