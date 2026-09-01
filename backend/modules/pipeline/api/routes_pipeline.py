@@ -12,22 +12,17 @@ behind authentication before it is exposed anywhere — an unauthenticated
 endpoint that fetches arbitrary URLs is an open proxy, and someone will find it.
 """
 
-"""
-Pipeline admin API — submit resources, check status.
-"""
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..container import Container
-from ..domain.enums import ResourceStatus
 from ..domain.errors import PermanentError
 from ..services.submission import SubmissionService
 from .schemas import SubmitRequest, SubmitResponse
-
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 

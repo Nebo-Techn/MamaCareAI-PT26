@@ -17,10 +17,6 @@ TODO (junior dev): implement these as pydantic BaseModel classes with real
 validation. Validate at the EDGE so nothing invalid reaches a service.
 """
 
-"""
-API request/response schemas (Pydantic).
-"""
-
 from __future__ import annotations
 
 import ipaddress

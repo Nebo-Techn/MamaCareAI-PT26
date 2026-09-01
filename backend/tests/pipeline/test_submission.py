@@ -61,55 +61,12 @@ def test_submit_creates_pdf_resource_and_ingest_job():
     assert resource.source_type == SourceType.PDF
     assert resource.source_url == "https://example.com/guide.pdf"
     assert resource.status == ResourceStatus.SUBMITTED
-
     assert resources.get(resource.resource_id) == resource
-
     assert queue.depth("ingest") == 1
 
-    def test_submit_infers_pdf_source_type():
-     service, _, _ = create_service()
 
-    resource = service.submit(
-        source_url="https://example.com/maternal-guide.pdf",
-        submitted_by="test-user",
-    )
-
-    assert resource.source_type == SourceType.PDF
-
-    def test_explicit_source_type_wins_over_inference():
-     service, _, _ = create_service()
-
-    resource = service.submit(
-        source_url="https://example.com/maternal-guide.pdf",
-        source_type=SourceType.WEB,
-        submitted_by="test-user",
-    )
-
-    assert resource.source_type == SourceType.WEB
-
-    def test_submit_rejects_loopback_url():
-     service, _, _ = create_service()
-
-    with pytest.raises(PermanentError):
-        service.submit(
-            source_url="http://127.0.0.1",
-            submitted_by="test-user",
-        )
-
-    def test_submit_preserves_metadata():
-     service, _, _ = create_service()
-
-    resource = service.submit(
-        source_url="https://example.com/guide.pdf",
-        submitted_by="david",
-        metadata={"publisher": "WHO"},
-    )
-
-    assert resource.source_metadata["publisher"] == "WHO"
-    assert resource.source_metadata["submitted_by"] == "david"     
-
-    def test_submit_infers_pdf_source_type():
-     service, _, _ = create_service()
+def test_submit_infers_pdf_source_type():
+    service, _, _ = create_service()
 
     resource = service.submit(
         source_url="https://example.com/maternal-guide.pdf",
@@ -151,4 +108,4 @@ def test_submit_preserves_metadata():
     )
 
     assert resource.source_metadata["publisher"] == "WHO"
-    assert resource.source_metadata["submitted_by"] == "david"      
+    assert resource.source_metadata["submitted_by"] == "david"   
