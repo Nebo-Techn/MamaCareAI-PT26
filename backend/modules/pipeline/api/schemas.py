@@ -82,7 +82,7 @@ class SubmitResponse(BaseModel):
 
 class ResourceStatusResponse(BaseModel):
     resource_id: str
-    source_url: HttpUrl
+    source_url: HttpUrl | None
     source_type: SourceType
     status: ResourceStatus
     detected_language: str | None = None
@@ -91,6 +91,11 @@ class ResourceStatusResponse(BaseModel):
     updated_at: object
     current_version: int | None = None
     error: str | None = None
+
+
+class PipelineStatsResponse(BaseModel):
+    queue_depth: dict[str, int]
+    resource_counts: dict[str, int]
 
 
 class BlockSchema(BaseModel):
