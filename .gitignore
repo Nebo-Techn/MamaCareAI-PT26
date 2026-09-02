@@ -16,6 +16,10 @@ venv/
 data/vector_store/
 *.sqlite3
 
+# Local Hugging Face NLLB model weights (multi-GB; downloaded per developer)
+models/nllb/
+models/nllb-200/
+
 # OS / editor
 .DS_Store
 .vscode/
