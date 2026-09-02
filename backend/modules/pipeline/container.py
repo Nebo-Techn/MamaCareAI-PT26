@@ -76,11 +76,7 @@ class Container:
                 search=self.search,
                 compliance_gate=ComplianceGate(
                     strict=self.settings.compliance_strict,
-                    allowed_licenses=frozenset(
-                        license_id.strip()
-                        for license_id in self.settings.allowed_licenses.split(",")
-                        if license_id.strip()
-                    ),
+                    allowed_licenses=self.settings.allowed_license_set(),
                 ),
             ),
         }
@@ -137,6 +133,9 @@ def build_search_index(settings: PipelineSettings) -> SearchIndex:
 
 
 def build_translator(settings: PipelineSettings) -> Translator:
+    if settings.translation_engine == "passthrough":
+        from .adapters.translation.passthrough_translator import PassthroughTranslator
+        return PassthroughTranslator()
     if settings.translation_engine == "nllb":
         from .adapters.translation.nllb_translator import NllbTranslator
         return NllbTranslator(batch_size=settings.translation_batch_size)
@@ -146,7 +145,7 @@ def build_translator(settings: PipelineSettings) -> Translator:
         if not api_key:
             raise ValueError(f"{settings.translation_engine} translation requires PIPELINE_TRANSLATION_API_KEY")
         return CloudTranslator(provider=settings.translation_engine, api_key=api_key, region=os.getenv("PIPELINE_AWS_REGION"), batch_size=settings.translation_batch_size)
-    raise ValueError(f"Unsupported translation engine: {settings.translation_engine!r}. Supported: nllb, google, aws, azure")
+    raise ValueError(f"Unsupported translation engine: {settings.translation_engine!r}. Supported: passthrough, nllb, google, aws, azure")
 
 
 def build_detector(settings: PipelineSettings) -> LanguageDetector:
