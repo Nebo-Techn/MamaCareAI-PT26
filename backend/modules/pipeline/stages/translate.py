@@ -82,6 +82,7 @@ class TranslateStage(Stage):
             document.blocks, chunks, translated_texts
         )
         source_by_order = {block.order: block.text for block in document.blocks}
+        kind_by_order = {block.order: block.kind for block in document.blocks}
         confidence_by_order = {
             block_order: translated_chunk.confidence
             for chunk, translated_chunk in zip(chunks, translated_chunks, strict=True)
@@ -97,6 +98,7 @@ class TranslateStage(Stage):
         units = tuple(
             TranslationUnit(
                 order=order,
+                kind=kind_by_order[order],
                 source_text=source_by_order[order],
                 translated_text=translated_text,
                 confidence=confidence_by_order.get(order),

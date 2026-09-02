@@ -149,6 +149,7 @@ class TranslationUnit:
     order: int
     source_text: str
     translated_text: str
+    kind: str = "paragraph"
     confidence: float | None = None  # provider-supplied, when available
 
 
