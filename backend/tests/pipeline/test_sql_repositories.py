@@ -192,7 +192,7 @@ def test_document_repo_save_and_get(session_factory):
         resource_id="res-doc-1",
         title="Sample Document",
         author="John Doe",
-        published_date=now,
+        published_date=now.isoformat(),
         blocks=[
             TextBlock(block_id="b1", text="Header text", order=0),
             TextBlock(block_id="b2", text="Body text", order=1),
@@ -256,6 +256,7 @@ def test_version_repo_auto_increments_version_number(session_factory):
     ver_repo.save_version(v2)
 
     latest = ver_repo.get_latest("res-ver-1")
+    assert latest is not None
     assert latest.version_number == 2
     assert latest.author_kind == AuthorKind.HUMAN
     assert latest.units[0].target_text == "Habari"
@@ -300,7 +301,7 @@ def test_review_repo_claim_next_and_save(session_factory):
 
     # Complete assignment
     claimed.decision = ReviewDecision.APPROVED
-    claimed.completed_at = datetime.now(UTC)
+    claimed.completed_at = datetime.now(UTC).isoformat()
     rev_repo.save_assignment(claimed)
 
     updated = rev_repo.get_assignment("assign-1")
@@ -371,7 +372,7 @@ def test_review_repo_audit_trail(session_factory):
         from_status=ResourceStatus.PENDING,
         to_status=ResourceStatus.PROCESSING,
         at=now,
-        details={"reason": "Started processing"},
+        details='{"reason": "Started processing"}',
     )
 
     rev_repo.append_audit(event)

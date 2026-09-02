@@ -1,5 +1,4 @@
-import pytest
-from modules.pipeline.adapters.translation.chunker import Chunker, Chunk
+from modules.pipeline.adapters.translation.chunker import Chunker
 from modules.pipeline.domain.models import TextBlock
 
 
@@ -10,7 +9,7 @@ def test_chunker_empty_input():
 
 def test_chunker_single_block():
     chunker = Chunker(max_chars=100)
-    block = TextBlock(order=1, text="Habari za asubuhi")
+    block = TextBlock(order=1, text="Habari za asubuhi", kind="text")
     chunks = chunker.chunk((block,))
     assert len(chunks) == 1
     assert chunks[0].text == "Habari za asubuhi"
@@ -19,7 +18,7 @@ def test_chunker_single_block():
 
 def test_chunker_multiple_blocks():
     chunker = Chunker(max_chars=100)
-    block1 = TextBlock(order=1, text="Kipande cha kwanza.")
-    block2 = TextBlock(order=2, text="Kipande cha pili.")
+    block1 = TextBlock(order=1, text="Kipande cha kwanza.", kind="text")
+    block2 = TextBlock(order=2, text="Kipande cha pili.", kind="text")
     chunks = chunker.chunk((block1, block2))
     assert len(chunks) >= 1

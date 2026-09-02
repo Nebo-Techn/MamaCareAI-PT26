@@ -8,12 +8,15 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "chardet>=7.6.0",
     "huggingface-hub>=1.29.0",
     "pydantic-settings>=2.0.0",
     "pytest>=9.1.1",
     "ruff>=0.16.3",
     "sentencepiece>=0.2.2",
+    "sqlalchemy>=2.0.52",
     "torch>=2.13.0",
+    "trafilatura>=2.2.0",
     "transformers>=5.16.1",
 ]
 

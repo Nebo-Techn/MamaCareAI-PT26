@@ -90,13 +90,16 @@ class HtmlExtractor(ContentExtractor):
             output_format="python",
             with_metadata=True,
         )
-        if extracted is None or extracted.body is None:
+        body = getattr(extracted, "body", None)
+        if body is None and isinstance(extracted, dict):
+            body = extracted.get("body")
+        if extracted is None or body is None:
             raise ExtractionError(
                 f"No extractable content in {resource_id}",
                 resource_id=resource_id,
             )
 
-        blocks, contains_tables = self._build_blocks(extracted.body)
+        blocks, contains_tables = self._build_blocks(body)
 
         if not blocks:
             raise ExtractionError(
@@ -112,16 +115,17 @@ class HtmlExtractor(ContentExtractor):
             )
 
         source_metadata = dict(metadata)
-        if extracted.language:
-            source_metadata["language"] = extracted.language
+        language = self._meta_value(extracted, "language")
+        if language:
+            source_metadata["language"] = language
         if contains_tables:
             source_metadata["contains_tables"] = True
 
         return NormalizedDocument(
             resource_id=resource_id,
-            title=extracted.title,
-            author=extracted.author,
-            published_date=self._parse_date(extracted.date),
+            title=self._meta_value(extracted, "title"),
+            author=self._meta_value(extracted, "author"),
+            published_date=self._parse_date(self._meta_value(extracted, "date")),
             blocks=tuple(blocks),
             source_metadata=source_metadata,
         )
@@ -198,11 +202,34 @@ class HtmlExtractor(ContentExtractor):
         return _WHITESPACE_RE.sub(" ", text).strip()
 
     @staticmethod
+    def _meta_value(extracted, key: str) -> str | None:
+        if extracted is None:
+            return None
+
+        if isinstance(extracted, dict):
+            for candidate in (extracted.get("metadata"), extracted.get("meta")):
+                if isinstance(candidate, dict):
+                    value = candidate.get(key)
+                    if value not in (None, ""):
+                        return str(value)
+            value = extracted.get(key)
+            return str(value) if value not in (None, "") else None
+
+        metadata = getattr(extracted, "metadata", None)
+        if isinstance(metadata, dict):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                return str(value)
+
+        value = getattr(extracted, key, None)
+        return str(value) if value not in (None, "") else None
+
+    @staticmethod
     def _parse_date(value: str | None) -> datetime | None:
         if not value:
             return None
         try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value)
         except ValueError:
             return None
         if parsed.tzinfo is None:
