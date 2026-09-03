@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-
 from backend.modules.pipeline.adapters.translation.chunker import Chunk, Chunker
 from backend.modules.pipeline.container import build_test_container
 from backend.modules.pipeline.domain.enums import (

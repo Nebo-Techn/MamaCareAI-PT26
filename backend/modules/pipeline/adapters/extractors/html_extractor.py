@@ -202,7 +202,7 @@ class HtmlExtractor(ContentExtractor):
         if not value:
             return None
         try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))  # noqa: FURB162
         except ValueError:
             return None
         if parsed.tzinfo is None:
