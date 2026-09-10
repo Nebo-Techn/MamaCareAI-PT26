@@ -1,5 +1,4 @@
-import pytest
-from modules.pipeline.adapters.translation.chunker import Chunker, Chunk
+from modules.pipeline.adapters.translation.chunker import Chunker
 from modules.pipeline.domain.models import TextBlock
 
 

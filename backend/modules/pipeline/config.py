@@ -90,7 +90,9 @@ class PipelineSettings(BaseSettings):
     def allowed_license_set(self) -> frozenset[str]:
         """Parse the comma-separated licence allowlist.
 
-        TODO: split on commas, strip whitespace, drop empties. Env vars are
+        Splits on commas, strips whitespace, drops empties. Env vars are
         strings; parse them in ONE place rather than at every use site.
         """
-        raise NotImplementedError
+        return frozenset(
+            part.strip() for part in self.allowed_licenses.split(",") if part.strip()
+        )
