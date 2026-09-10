@@ -1,22 +1,3 @@
-"""
-Stage 3: Language detection (PDF 3.3).
-
-Fast, cheap detection with a confidence score. Anything below the configured
-threshold (default 0.90) is routed to a HUMAN for confirmation rather than
-being guessed at.
-
-WHY THE THRESHOLD IS THE WHOLE POINT
-"Bad detection silently poisons the translation step." An English document
-misdetected as Swahili skips translation and reaches a reviewer as untranslated
-text with no explanation. A Swahili document misdetected as English gets
-"translated" into mangled Swahili. Both failures are invisible until a human
-wastes time on them — so we spend one cheap human confirmation to avoid it.
-
-The threshold is CONFIGURABLE, not hardcoded. Tune it from real data: if the
-confirmation queue is always empty, the threshold is too low to be doing
-anything; if it is drowning, it is too high.
-"""
-
 from __future__ import annotations
 
 from ..domain.enums import ResourceStatus
@@ -32,7 +13,7 @@ from .base import Stage, StageResult
 
 
 class DetectLanguageStage(Stage):
-    """Identifies the source language and routes low-confidence cases to a human."""
+    """Detect a resource's language and route it to the next pipeline stage."""
 
     def __init__(
         self,
@@ -51,6 +32,8 @@ class DetectLanguageStage(Stage):
         )
         self._documents = documents
         self._detector = detector
+        if not 0.0 <= confidence_threshold <= 1.0:
+            raise ValueError("confidence_threshold must be between 0.0 and 1.0")
         self._threshold = confidence_threshold
         self._target_language = target_language
 
@@ -60,58 +43,45 @@ class DetectLanguageStage(Stage):
 
     @property
     def accepts(self) -> frozenset[ResourceStatus]:
-        # NEEDS_LANGUAGE_CONFIRMATION is accepted so that a human confirming the
-        # language re-enters this stage and continues down the normal path,
-        # rather than needing a separate bypass route.
         return frozenset(
             {ResourceStatus.EXTRACTED, ResourceStatus.NEEDS_LANGUAGE_CONFIRMATION}
         )
 
     def handle(self, resource: Resource) -> StageResult:
-        """Detect the language, then route on confidence and on whether it is already Swahili.
+        """Detect the language and choose the next stage."""
+        confirmed_by = resource.source_metadata.get("language_confirmed_by")
+        if confirmed_by and resource.detected_language:
+            language = resource.detected_language
+            confidence = resource.language_confidence
+            details: dict[str, object] = {"language_confirmed_by": confirmed_by}
+        else:
+            document = self._documents.get_document(resource.resource_id)
+            result = self._detector.detect(document.raw_text)
+            language = result.language
+            confidence = result.confidence
+            if confidence < self._threshold:
+                return StageResult(
+                    next_status=ResourceStatus.NEEDS_LANGUAGE_CONFIRMATION,
+                    next_stage=None,
+                    resource_changes={
+                        "detected_language": language,
+                        "language_confidence": confidence,
+                    },
+                    details={"alternatives": result.alternatives},
+                )
+            details = {"alternatives": result.alternatives}
 
-        TODO (junior dev) — implement in this order:
-
-          1. SHORT-CIRCUIT A HUMAN CONFIRMATION:
-             If `resource.detected_language` is already set by a human
-             (source_metadata carries a "language_confirmed_by" marker), trust
-             it and skip detection entirely. Do not overwrite a human decision
-             with a model's guess — that is an infuriating bug to be on the
-             receiving end of.
-
-          2. DETECT on the normalized text:
-                 document = self._documents.get_document(resource.resource_id)
-                 result = self._detector.detect(document.raw_text)
-             Detection runs on extracted text, never on raw HTML — markup and
-             boilerplate skew the result toward English.
-
-          3. LOW CONFIDENCE -> HUMAN:
-                 if result.confidence < self._threshold:
-                     return StageResult(
-                         next_status=ResourceStatus.NEEDS_LANGUAGE_CONFIRMATION,
-                         next_stage=None,   # stop; a human must act
-                         resource_changes={"detected_language": result.language,
-                                           "language_confidence": result.confidence},
-                         details={"alternatives": result.alternatives},
-                     )
-             `next_stage=None` is deliberate: the pipeline PARKS the resource.
-             Store the alternatives so the human picks from a list.
-
-          4. ALREADY SWAHILI -> SKIP TRANSLATION (PDF 3.4, first bullet):
-                 if result.language == self._target_language:
-                     next_status=LANGUAGE_DETECTED, next_stage="store"
-             Note this transition goes straight to `store`, bypassing translate.
-             `state_machine.py` allows LANGUAGE_DETECTED -> STORED precisely
-             for this case. It still gets reviewed — skipping MT is not
-             skipping human review.
-
-          5. OTHERWISE -> TRANSLATE:
-                 next_status=LANGUAGE_DETECTED, next_stage="translate"
-
-        TESTING NOTE: this stage is pure routing logic over a tiny interface,
-        so it is trivial to test with a fake detector — write tests for all four
-        branches above (confirmed / low confidence / already-Swahili / normal).
-        No network, no model download. There is no excuse for this stage being
-        untested.
-        """
-        raise NotImplementedError
+        next_stage = (
+            "store"
+            if language.casefold() == self._target_language.casefold()
+            else "translate"
+        )
+        return StageResult(
+            next_status=ResourceStatus.LANGUAGE_DETECTED,
+            next_stage=next_stage,
+            resource_changes={
+                "detected_language": language,
+                "language_confidence": confidence,
+            },
+            details=details,
+        )

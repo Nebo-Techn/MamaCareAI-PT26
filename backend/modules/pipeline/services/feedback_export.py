@@ -35,8 +35,8 @@ class EditPair:
     machine_translation: str
     human_translation: str
     source_language: str
-    engine: str                  # which MT engine produced the machine version
-    edit_distance: float         # 0.0 = untouched, 1.0 = completely rewritten
+    engine: str  # which MT engine produced the machine version
+    edit_distance: float  # 0.0 = untouched, 1.0 = completely rewritten
     edited_at: datetime
 
 

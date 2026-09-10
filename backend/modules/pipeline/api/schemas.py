@@ -19,6 +19,115 @@ validation. Validate at the EDGE so nothing invalid reaches a service.
 
 from __future__ import annotations
 
+import ipaddress
+import socket
+
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+from ..domain.enums import ResourceStatus, ReviewDecision, SourceType
+
+
+class SubmitRequest(BaseModel):
+    source_url: HttpUrl
+    source_type: SourceType | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("source_url")
+    @classmethod
+    def validate_public_url(cls, value: HttpUrl) -> HttpUrl:
+        hostname = value.host
+
+        if not hostname:
+            raise ValueError("source URL must contain a hostname")
+
+        try:
+            addresses = socket.getaddrinfo(
+                hostname,
+                None,
+                type=socket.SOCK_STREAM,
+            )
+        except socket.gaierror as exc:
+            raise ValueError(
+                "source URL hostname could not be resolved"
+            ) from exc
+
+        seen: set[str] = set()
+
+        for address in addresses:
+            ip_text = address[4][0]
+
+            if ip_text in seen:
+                continue
+
+            seen.add(ip_text)
+            ip = ipaddress.ip_address(ip_text)
+
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_unspecified
+            ):
+                raise ValueError(
+                    "source URL must not resolve to a private or local address"
+                )
+
+        return value
+
+
+class SubmitResponse(BaseModel):
+    resource_id: str
+    status: ResourceStatus
+
+
+class ResourceStatusResponse(BaseModel):
+    resource_id: str
+    source_url: HttpUrl
+    source_type: SourceType
+    status: ResourceStatus
+    detected_language: str | None = None
+    language_confidence: float | None = None
+    submitted_at: object
+    updated_at: object
+    current_version: int | None = None
+    error: str | None = None
+
+
+class BlockSchema(BaseModel):
+    order: int
+    kind: str
+    text: str
+    start_seconds: float | None = None
+    end_seconds: float | None = None
+
+
+class UnitSchema(BaseModel):
+    order: int
+    source_text: str
+    translated_text: str
+    confidence: float | None = None
+
+
+class ReviewPayloadResponse(BaseModel):
+    resource_id: str
+    title: str | None
+    source_language: str | None
+    source_blocks: list[BlockSchema]
+    translated_units: list[UnitSchema]
+    machine_units: list[UnitSchema] | None
+    version_number: int
+    engine: str | None
+
+
+class EditRequest(BaseModel):
+    units: list[UnitSchema]
+    note: str | None = None
+
+
+class DecisionRequest(BaseModel):
+    decision: ReviewDecision
+    note: str | None = None
+
 # ---------------------------------------------------------------------------
 # TODO: implement the following schemas.
 #

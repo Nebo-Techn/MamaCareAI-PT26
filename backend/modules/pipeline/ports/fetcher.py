@@ -32,7 +32,7 @@ class FetchResult:
     """
 
     content: bytes
-    content_type: str                       # MIME type, e.g. "text/html", "application/pdf"
+    content_type: str  # MIME type, e.g. "text/html", "application/pdf"
     # Provenance the fetcher learned for free while fetching: final URL after
     # redirects, HTTP headers, video duration, publisher, license string...
     metadata: dict[str, object] = field(default_factory=dict)

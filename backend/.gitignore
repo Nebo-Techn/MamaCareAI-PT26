@@ -1,0 +1,26 @@
+# Environment / secrets
+.env
+*.env
+!*.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Vector store / local data artifacts
+data/vector_store/
+*.sqlite3
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Nebo-internal only — grading, individual assessment notes, admin trackers,
+# unreleased report drafts. Never committed, never pushed. See internal/README.md.
+internal/

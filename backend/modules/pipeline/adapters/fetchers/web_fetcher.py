@@ -106,7 +106,9 @@ class WebFetcher(SourceFetcher):
                     )
 
                 if response.status_code in (404, 403):
-                    raise PermanentError(f"{response.status_code} fetching {source_url}")
+                    raise PermanentError(
+                        f"{response.status_code} fetching {source_url}"
+                    )
 
                 if response.status_code >= 500:
                     raise FetchError(f"{response.status_code} fetching {source_url}")
@@ -118,7 +120,9 @@ class WebFetcher(SourceFetcher):
                 for chunk in response.iter_bytes():
                     total += len(chunk)
                     if total > self._max_bytes:
-                        raise PermanentError(f"{source_url} exceeded max_bytes={self._max_bytes}")
+                        raise PermanentError(
+                            f"{source_url} exceeded max_bytes={self._max_bytes}"
+                        )
                     chunks.append(chunk)
 
                 content = b"".join(chunks)

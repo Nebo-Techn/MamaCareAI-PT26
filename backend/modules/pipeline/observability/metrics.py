@@ -48,17 +48,23 @@ class Metrics(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def observe(self, name: str, value: float, *, labels: dict[str, str] | None = None) -> None:
+    def observe(
+        self, name: str, value: float, *, labels: dict[str, str] | None = None
+    ) -> None:
         """Record a value in a histogram (durations, confidence scores)."""
         raise NotImplementedError
 
     @abstractmethod
-    def gauge(self, name: str, value: float, *, labels: dict[str, str] | None = None) -> None:
+    def gauge(
+        self, name: str, value: float, *, labels: dict[str, str] | None = None
+    ) -> None:
         """Set a gauge (queue depth, oldest review age)."""
         raise NotImplementedError
 
     @contextmanager
-    def timed(self, name: str, *, labels: dict[str, str] | None = None) -> Iterator[None]:
+    def timed(
+        self, name: str, *, labels: dict[str, str] | None = None
+    ) -> Iterator[None]:
         """Time a block and record it as a histogram observation.
 
             with metrics.timed("stage_duration_seconds", labels={"stage": "translate"}):

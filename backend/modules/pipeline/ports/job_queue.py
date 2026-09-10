@@ -37,7 +37,9 @@ class JobQueue(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def consume(self, stage: str, *, max_messages: int = 1) -> Iterator[AbstractContextManager[Job]]:
+    def consume(
+        self, stage: str, *, max_messages: int = 1
+    ) -> Iterator[AbstractContextManager[Job]]:
         """Yield jobs for `stage`, each wrapped in a context manager.
 
         The context manager is the ack protocol, and it exists so a junior dev

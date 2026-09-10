@@ -46,25 +46,27 @@ class SqliteSearchIndex(SearchIndex):
 
     def index(self, resource: IndexedResource) -> None:
         """TODO:
-          [ ] UPSERT by resource_id — DELETE then INSERT is the standard FTS5
-              pattern, since FTS5 has no native upsert. Skipping the delete
-              means every re-index adds a duplicate row and search returns the
-              same document three times.
-          [ ] Wrap in a transaction so a crash between delete and insert cannot
-              lose the document from the index entirely.
+        [ ] UPSERT by resource_id — DELETE then INSERT is the standard FTS5
+            pattern, since FTS5 has no native upsert. Skipping the delete
+            means every re-index adds a duplicate row and search returns the
+            same document three times.
+        [ ] Wrap in a transaction so a crash between delete and insert cannot
+            lose the document from the index entirely.
         """
         raise NotImplementedError
 
-    def search(self, query: str, *, limit: int = 20, offset: int = 0) -> list[SearchHit]:
+    def search(
+        self, query: str, *, limit: int = 20, offset: int = 0
+    ) -> list[SearchHit]:
         """TODO:
-          [ ] ESCAPE THE QUERY. FTS5 has its own syntax (AND, OR, NEAR, *, ")
-              and unescaped user input either errors or does something
-              surprising. Quote the terms.
-          [ ] SELECT ... WHERE resource_fts MATCH ? ORDER BY rank
-          [ ] Use snippet() for the highlighted excerpt and bm25() for the
-              score, so the review UI can show context around the match.
-          [ ] Return [] for an empty query rather than raising — an empty
-              search box is a normal state.
+        [ ] ESCAPE THE QUERY. FTS5 has its own syntax (AND, OR, NEAR, *, ")
+            and unescaped user input either errors or does something
+            surprising. Quote the terms.
+        [ ] SELECT ... WHERE resource_fts MATCH ? ORDER BY rank
+        [ ] Use snippet() for the highlighted excerpt and bm25() for the
+            score, so the review UI can show context around the match.
+        [ ] Return [] for an empty query rather than raising — an empty
+            search box is a normal state.
         """
         raise NotImplementedError
 

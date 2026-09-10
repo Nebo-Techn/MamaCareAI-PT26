@@ -140,11 +140,11 @@ def make_version(
         version_id=f"v{resource_id}-{version_number}",
         resource_id=resource_id,
         version_number=version_number,
-        author_kind=VersionAuthorKind.HUMAN if version_number > 1 else VersionAuthorKind.MACHINE,
+        author_kind=VersionAuthorKind.HUMAN
+        if version_number > 1
+        else VersionAuthorKind.MACHINE,
         author_id=None if version_number == 1 else "reviewer-7",
-        units=(
-            TranslationUnit(order=0, source_text="source", translated_text=text),
-        ),
+        units=(TranslationUnit(order=0, source_text="source", translated_text=text),),
     )
 
 
@@ -156,12 +156,16 @@ def make_document(*, resource_id: str = "r1") -> NormalizedDocument:
         published_date=None,
         blocks=(
             TextBlock(order=0, kind="paragraph", text="Habari za afya ya mama."),
-            TextBlock(order=1, kind="paragraph", text="Tafadhali wasiliana na daktari."),
+            TextBlock(
+                order=1, kind="paragraph", text="Tafadhali wasiliana na daktari."
+            ),
         ),
     )
 
 
-def build_store_stage(**overrides) -> tuple[StoreStage, FakeSearchIndex, FakeReviewService]:
+def build_store_stage(
+    **overrides,
+) -> tuple[StoreStage, FakeSearchIndex, FakeReviewService]:
     search = FakeSearchIndex()
     review_service = FakeReviewService()
     versions = overrides.get("versions") or FakeVersionRepository()

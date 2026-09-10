@@ -246,6 +246,15 @@ content reaches the bot's knowledge base. Coordinate with whoever owns
 translation, saves it, and both version 1 (machine) and version 2 (human) are
 retrievable.
 
+Sprint 3 workflow distribution
+| Devs | PIPE Allocated | Respective Folder(s) | Duration |
+|---|---|---|---:|
+| **DEV A** | PIPE-29, PIPE-32 | `services/compliance.py`<br>`stages/publish.py` | **2.5 days** |
+| **DEV B** | PIPE-25, PIPE-26, PIPE-27 | `services/review_service.py`<br>`tests/pipeline/test_review_service.py`<br>`api/routes_review.py`<br>`api/templates/review.html` | **8 days** |
+| **DEV C** | PIPE-31, PIPE-30 | `observability/metrics.py`<br>`cli.py` | **3 days** |
+| **DEV D** | PIPE-24 | `adapters/storage/sqlite_search_index.py` | **1.5 days** |
+| **DEV E** | PIPE-28 | `adapters/fetchers/pdf_fetcher.py`<br>`adapters/extractors/pdf_text_extractor.py` | **3 days** |
+| **Total** | **PIPE-24 to PIPE-32** | **All assigned folders** | **18 days** |
 ---
 
 ## 7. Sprint 4 — Mon 21 Sep → Fri 25 Sep

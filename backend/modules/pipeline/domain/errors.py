@@ -40,6 +40,7 @@ class PipelineError(Exception):
 
 # --- Transient: retry with backoff -------------------------------------------------
 
+
 class TransientError(PipelineError):
     """Something outside our control failed and may work on retry."""
 
@@ -70,6 +71,7 @@ class ProviderRateLimited(TransientError):
 
 
 # --- Permanent: do not retry, route to dead-letter / human ------------------------
+
 
 class PermanentError(PipelineError):
     """The input or configuration is wrong. Retrying changes nothing."""

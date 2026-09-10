@@ -32,13 +32,17 @@ class ComplianceDecision:
 
     allowed: bool
     reason: str | None = None
-    license_id: str | None = None   # e.g. "CC-BY-4.0", "public-domain", "permission-granted"
+    license_id: str | None = (
+        None  # e.g. "CC-BY-4.0", "public-domain", "permission-granted"
+    )
 
 
 class ComplianceGate:
     """Decides whether a resource may be published."""
 
-    def __init__(self, *, allowed_licenses: frozenset[str], strict: bool = True) -> None:
+    def __init__(
+        self, *, allowed_licenses: frozenset[str], strict: bool = True
+    ) -> None:
         self._allowed = allowed_licenses
         # strict=True: unknown licence -> BLOCK (default deny).
         # This is the correct default. "We could not determine the licence, so

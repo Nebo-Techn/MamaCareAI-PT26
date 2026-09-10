@@ -40,7 +40,7 @@ class IndexedResource:
 class SearchHit:
     resource_id: str
     title: str | None
-    snippet: str          # highlighted excerpt around the match
+    snippet: str  # highlighted excerpt around the match
     score: float
 
 
@@ -57,7 +57,9 @@ class SearchIndex(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, *, limit: int = 20, offset: int = 0) -> list[SearchHit]:
+    def search(
+        self, query: str, *, limit: int = 20, offset: int = 0
+    ) -> list[SearchHit]:
         """Full-text search over indexed Swahili text.
 
         TODO (junior dev): configure a Swahili-appropriate analyzer. The default

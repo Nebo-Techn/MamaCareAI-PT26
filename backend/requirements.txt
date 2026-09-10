@@ -43,9 +43,9 @@ chardet             # charset fallback when decoding HTML (meta/header both abse
 # fasttext-wheel      # lid.176 language detection (prebuilt wheels; plain `fasttext` needs a compiler)
 
 # Sprint 3 — translation + review
-# transformers        # NLLB-200 self-hosted MT
-# torch               # NLLB runtime. LARGE (~2GB+). CPU-only build is fine to start.
-# sentencepiece       # NLLB tokenizer
+transformers        # NLLB-200 self-hosted MT
+torch               # NLLB runtime. LARGE (~2GB+). CPU-only build is fine to start.
+sentencepiece       # NLLB tokenizer
 
 # Sprint 4 — OCR, video/ASR, observability
 # pytesseract         # OCR fallback for scanned PDFs (also needs the Tesseract binary + `swa` language pack)
@@ -56,6 +56,6 @@ chardet             # charset fallback when decoding HTML (meta/header both abse
 # prometheus-client   # per-stage metrics
 
 # Production only (not needed for the free-tier MVP)
-# boto3               # S3 object storage + SQS queue
+boto3                 # S3 object storage + SQS queue
 # psycopg[binary]     # PostgreSQL driver
 # opensearch-py       # OpenSearch full-text index
