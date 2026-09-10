@@ -29,6 +29,8 @@ models/nllb-200/
 # unreleased report drafts. Never committed, never pushed. See internal/README.md.
 internal/
 
+# Models
+models/
 pyproject.toml
 .python-version
 src
