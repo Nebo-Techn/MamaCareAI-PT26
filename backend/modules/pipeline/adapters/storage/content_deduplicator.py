@@ -17,6 +17,11 @@ Document any change in docs/DECISIONS.md.
 
 from __future__ import annotations
 
+import hashlib
+import re
+import unicodedata
+from urllib.parse import parse_qs, urlencode, urlunparse, urlparse
+
 from ...ports.deduplicator import Deduplicator
 from ...ports.repositories import ResourceRepository
 
@@ -46,24 +51,22 @@ class ContentDeduplicator(Deduplicator):
     def compute_hash(self, *, source_url: str, content: bytes | str) -> str:
         """Return a stable sha256 over normalized URL + content.
 
-        TODO (junior dev) — normalization steps, in order:
-
-          URL:
-            [ ] lowercase scheme and host (paths stay case-sensitive)
-            [ ] drop the fragment (#section) — same document
-            [ ] remove STRIP_QUERY_PARAMS, then sort the remaining params so
+        URL normalization steps:
+            - lowercase scheme and host (paths stay case-sensitive)
+            - drop the fragment (#section) — same document
+            - remove STRIP_QUERY_PARAMS, then sort the remaining params so
                 ?a=1&b=2 and ?b=2&a=1 hash identically
-            [ ] strip a trailing slash
-            [ ] drop "www."
+            - strip a trailing slash
+            - drop "www."
 
-          CONTENT (when non-empty — an empty content means URL-only hashing):
-            [ ] decode as UTF-8 with errors="ignore" if bytes
-            [ ] NFC normalize
-            [ ] lowercase
-            [ ] collapse all whitespace runs to a single space, strip ends
+        CONTENT normalization (when non-empty — an empty content means URL-only hashing):
+            - decode as UTF-8 with errors="ignore" if bytes
+            - NFC normalize
+            - lowercase
+            - collapse all whitespace runs to a single space, strip ends
 
-          THEN: sha256(normalized_url + "\\x00" + normalized_content).hexdigest()
-          The null separator prevents a boundary collision between the two parts.
+        THEN: sha256(normalized_url + "\\x00" + normalized_content).hexdigest()
+        The null separator prevents a boundary collision between the two parts.
 
         MUST BE DETERMINISTIC. No timestamps, no randomness, no dict iteration
         order in the digest. Test it: the same input must produce the same hash
@@ -73,13 +76,70 @@ class ContentDeduplicator(Deduplicator):
         MinHash, for pages that differ only by a "last updated" date. Only worth
         it if exact-hash dedup proves insufficient in practice — measure first.
         """
-        raise NotImplementedError
+        normalized_url = self._normalize_url(source_url)
+
+        if content:
+            normalized_content = self._normalize_content(content)
+            combined = f"{normalized_url}\x00{normalized_content}"
+        else:
+            combined = normalized_url
+
+        return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL for consistent hashing."""
+        parsed = urlparse(url)
+
+        # Lowercase scheme and host
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+
+        # Drop "www." prefix
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+
+        # Drop fragment
+        fragment = ""
+
+        # Remove tracking params and sort remaining
+        query_dict = parse_qs(parsed.query, keep_blank_values=True)
+        for param in self.STRIP_QUERY_PARAMS:
+            query_dict.pop(param, None)
+
+        # Sort remaining params
+        sorted_params = sorted(query_dict.items())
+        query = urlencode(sorted_params, doseq=True) if sorted_params else ""
+
+        # Strip trailing slash from path
+        path = parsed.path.rstrip("/")
+
+        # urlunparse expects 6 components: scheme, netloc, path, params, query, fragment
+        return urlunparse((scheme, netloc, path, "", query, fragment))
+
+    def _normalize_content(self, content: bytes | str) -> str:
+        """Normalize content for consistent hashing."""
+        if isinstance(content, bytes):
+            content = content.decode("utf-8", errors="ignore")
+
+        # NFC normalize
+        content = unicodedata.normalize("NFC", content)
+
+        # Lowercase
+        content = content.lower()
+
+        # Collapse whitespace
+        content = re.sub(r"\s+", " ", content)
+
+        # Strip ends
+        content = content.strip()
+
+        return content
 
     def is_duplicate(self, content_hash: str) -> bool:
-        """TODO: `self._resources.find_by_content_hash(content_hash) is not None`.
+        """Check if content hash already exists in the repository.
 
-        Remember this is only a fast pre-check. The authoritative guarantee is
+        This is only a fast pre-check. The authoritative guarantee is
         the UNIQUE index on resources.content_hash — under concurrency, two
         workers can both see False here, and the database is what stops them.
         """
-        raise NotImplementedError
+        return self._resources.find_by_content_hash(content_hash) is not None
