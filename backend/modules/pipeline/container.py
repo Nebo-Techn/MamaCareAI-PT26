@@ -40,6 +40,7 @@ class Container:
 
     def stage(self, name: str) -> Stage:
         from .adapters.translation.chunker import Chunker
+        from .observability.metrics import NullMetrics, PrometheusMetrics
         from .services.compliance import ComplianceGate
         from .services.review_service import ReviewService
         from .stages.detect_language import DetectLanguageStage
@@ -50,11 +51,20 @@ class Container:
         from .stages.store import StoreStage
         from .stages.translate import TranslateStage
 
+        # PrometheusMetrics is a safe no-op without prometheus-client
+        # installed (see observability/metrics.py), so this never breaks
+        # tests or clean checkouts. Stages default to NullMetrics anyway.
+        metrics = (
+            PrometheusMetrics()
+            if self.settings.metrics_enabled
+            else NullMetrics()
+        )
         common = {
             "resources": self.resources,
             "queue": self.queue,
             "reviews": self.reviews,
             "max_attempts": self.settings.max_attempts,
+            "metrics": metrics,
         }
         review_service = ReviewService(
             resources=self.resources,

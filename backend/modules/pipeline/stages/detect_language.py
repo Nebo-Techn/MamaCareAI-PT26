@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..domain.enums import ResourceStatus
 from ..domain.models import Resource
+from ..observability.metrics import Metrics
 from ..ports.job_queue import JobQueue
 from ..ports.language_detector import LanguageDetector
 from ..ports.repositories import (
@@ -26,9 +27,10 @@ class DetectLanguageStage(Stage):
         confidence_threshold: float = 0.90,
         target_language: str = "sw",
         max_attempts: int = 5,
+        metrics: Metrics | None = None,
     ) -> None:
         super().__init__(
-            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts
+            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts, metrics=metrics
         )
         self._documents = documents
         self._detector = detector

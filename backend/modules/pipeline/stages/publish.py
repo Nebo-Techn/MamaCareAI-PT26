@@ -23,6 +23,7 @@ from __future__ import annotations
 from ..domain.enums import ResourceStatus
 from ..domain.errors import InvalidStateTransition
 from ..domain.models import Resource
+from ..observability.metrics import Metrics
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import ResourceRepository, ReviewRepository, VersionRepository
 from ..ports.search_index import IndexedResource, SearchIndex
@@ -42,9 +43,10 @@ class PublishStage(Stage):
         search: SearchIndex,
         compliance_gate: object,  # TODO: type as services.compliance.ComplianceGate
         max_attempts: int = 5,
+        metrics: Metrics | None = None,
     ) -> None:
         super().__init__(
-            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts
+            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts, metrics=metrics
         )
         self._versions = versions
         self._search = search

@@ -6,6 +6,7 @@ from ..adapters.translation.chunker import Chunker
 from ..domain.enums import ResourceStatus, VersionAuthorKind
 from ..domain.errors import TranslationError
 from ..domain.models import ContentVersion, Resource, TranslationUnit
+from ..observability.metrics import Metrics
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import (
     DocumentRepository,
@@ -30,9 +31,10 @@ class TranslateStage(Stage):
         chunker: Chunker,
         target_language: str = "sw",
         max_attempts: int = 5,
+        metrics: Metrics | None = None,
     ) -> None:
         super().__init__(
-            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts
+            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts, metrics=metrics
         )
         self._documents = documents
         self._versions = versions
