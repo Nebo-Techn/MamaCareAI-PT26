@@ -9,3 +9,7 @@ Keeping them apart matters because they have different failure semantics. A
 stage may retry silently five times; an HTTP request from a reviewer must
 either succeed or return an error the reviewer can act on immediately.
 """
+
+from .compliance import ComplianceDecision, ComplianceGate
+
+__all__ = ["ComplianceDecision", "ComplianceGate"]

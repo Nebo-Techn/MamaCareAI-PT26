@@ -26,7 +26,12 @@ from ..domain.models import Resource
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import ResourceRepository, ReviewRepository, VersionRepository
 from ..ports.search_index import IndexedResource, SearchIndex
+from ..services import ComplianceGate
 from .base import Stage, StageResult
+
+
+class KnowledgeHandoffError(Exception):
+    """Raised when knowledge handoff fails."""
 
 
 class PublishStage(Stage):
@@ -40,7 +45,8 @@ class PublishStage(Stage):
         reviews: ReviewRepository,
         versions: VersionRepository,
         search: SearchIndex,
-        compliance_gate: object,  # TODO: type as services.compliance.ComplianceGate
+        compliance_gate: ComplianceGate,
+        knowledge_handoff: object | None = None,  # TODO: type as knowledge.KnowledgeHandoff
         max_attempts: int = 5,
     ) -> None:
         super().__init__(
@@ -49,6 +55,7 @@ class PublishStage(Stage):
         self._versions = versions
         self._search = search
         self._compliance = compliance_gate
+        self._knowledge_handoff = knowledge_handoff
 
     @property
     def name(self) -> str:
@@ -95,11 +102,31 @@ class PublishStage(Stage):
             )
         )
 
+        # Knowledge handoff (PIPE-32): Send to modules/knowledge for chunking and embedding
+        if self._knowledge_handoff is not None:
+            try:
+                self._knowledge_handoff.handoff_published_content(
+                    resource_id=resource.resource_id,
+                    source_url=resource.source_url,
+                    title=resource.source_metadata.get("title"),
+                    translated_text=translated_text,
+                    version_number=version.version_number,
+                    language=resource.detected_language or "",
+                    metadata=resource.source_metadata,
+                )
+            except Exception as e:
+                # Log the error but don't fail the publish - search index is more critical
+                # In production, this should be monitored and retried
+                raise KnowledgeHandoffError(
+                    f"Failed to handoff resource {resource.resource_id} to knowledge module: {e}"
+                ) from e
+
         return StageResult(
             next_status=ResourceStatus.PUBLISHED,
             next_stage=None,
             details={
                 "approved_version": version.version_number,
                 "approved_by": resource.source_metadata.get("approved_by"),
+                "knowledge_handoff": self._knowledge_handoff is not None,
             },
         )

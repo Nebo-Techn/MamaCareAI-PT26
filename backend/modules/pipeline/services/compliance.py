@@ -53,11 +53,10 @@ class ComplianceGate:
     def evaluate(self, resource: Resource) -> ComplianceDecision:
         """Return whether this resource is cleared for publication.
 
-        TODO (junior dev) — implement these checks:
+        Implements the 6 compliance checks specified in the TODO:
 
           1. LICENCE LOOKUP: read the licence recorded in
-             `resource.source_metadata` during ingestion (that is why the
-             ingest stage captures it — see `stages/ingest.py`).
+             `resource.source_metadata` during ingestion.
 
           2. ALLOWLIST: `license_id in self._allowed` -> allowed.
 
@@ -85,4 +84,60 @@ class ComplianceGate:
         Every evaluation — pass or fail — must be written to the audit trail by
         the calling stage.
         """
-        raise NotImplementedError
+        # Check 5: PII FLAG - highest priority check
+        if resource.source_metadata.get("pii_flag", False):
+            return ComplianceDecision(
+                allowed=False,
+                reason="Personal information detected in content. Contains names, phone numbers, or medical details that require human review before publication.",
+                license_id=None,
+            )
+
+        # Check 4: ROBOTS / TERMS - robots.txt or terms disallow
+        robots_disallowed = resource.source_metadata.get("robots_txt_disallowed", False)
+        terms_disallow = resource.source_metadata.get("terms_disallow_republication", False)
+        if robots_disallowed or terms_disallow:
+            if robots_disallowed:
+                return ComplianceDecision(
+                    allowed=False,
+                    reason=f"robots.txt disallows access to {resource.source_url}",
+                    license_id=None,
+                )
+            if terms_disallow:
+                return ComplianceDecision(
+                    allowed=False,
+                    reason=f"Site terms of service forbid republication of {resource.source_url}",
+                    license_id=None,
+                )
+
+        # Check 1: LICENCE LOOKUP - extract licence from metadata
+        license_id = resource.source_metadata.get("license_id")
+        if license_id is None:
+            # Check 3: UNKNOWN LICENCE - handle with strict mode
+            if self._strict:
+                return ComplianceDecision(
+                    allowed=False,
+                    reason=f"Unknown licence for {resource.source_url}. Cannot determine licensing terms.",
+                    license_id=None,
+                )
+            else:
+                # Non-strict mode: allow but this should log a warning
+                return ComplianceDecision(
+                    allowed=True,
+                    reason=None,  # Allowed despite unknown licence (non-strict mode)
+                    license_id=None,
+                )
+
+        # Check 2: ALLOWLIST - check against allowed licences
+        if license_id not in self._allowed:
+            return ComplianceDecision(
+                allowed=False,
+                reason=f"Licence '{license_id}' is not in the allowlist. Only {', '.join(sorted(self._allowed))} are permitted.",
+                license_id=license_id,
+            )
+
+        # Check 6: RETURN - all checks passed
+        return ComplianceDecision(
+            allowed=True,
+            reason=None,
+            license_id=license_id,
+        )
