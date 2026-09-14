@@ -30,7 +30,7 @@ from modules.pipeline.domain.models import (
     TranslationUnit,
 )
 from modules.pipeline.ports.search_index import IndexedResource
-from modules.pipeline.stages.publish import PublishStage
+from modules.pipeline.stages.publish import KnowledgeHandoffError, PublishStage
 from modules.pipeline.stages.review import ReviewStage
 from modules.pipeline.stages.store import StoreStage
 
@@ -101,6 +101,33 @@ class FakeComplianceGate:
         from modules.pipeline.services.compliance import ComplianceDecision
 
         return ComplianceDecision(allowed=self._allowed, reason=self._reason)
+
+
+class FakeKnowledgeHandoff:
+    def __init__(self) -> None:
+        self.handoffs: list[dict] = []
+
+    def handoff_published_content(
+        self,
+        resource_id: str,
+        source_url: str,
+        title: str | None,
+        translated_text: str,
+        version_number: int,
+        language: str,
+        metadata: dict,
+    ) -> None:
+        self.handoffs.append(
+            {
+                "resource_id": resource_id,
+                "source_url": source_url,
+                "title": title,
+                "translated_text": translated_text,
+                "version_number": version_number,
+                "language": language,
+                "metadata": metadata,
+            }
+        )
 
 
 class FakeResourceRepository:
@@ -186,6 +213,7 @@ def build_publish_stage(**overrides) -> tuple[PublishStage, FakeSearchIndex]:
     search = FakeSearchIndex()
     compliance = overrides.get("compliance") or FakeComplianceGate(allowed=True)
     versions = overrides.get("versions") or FakeVersionRepository()
+    knowledge = overrides.get("knowledge")
     stage = PublishStage(
         resources=FakeResourceRepository(),
         queue=FakeJobQueue(),
@@ -193,6 +221,7 @@ def build_publish_stage(**overrides) -> tuple[PublishStage, FakeSearchIndex]:
         versions=versions,
         search=search,
         compliance_gate=compliance,
+        knowledge_handoff=knowledge,
     )
     return stage, search
 
@@ -316,3 +345,129 @@ def test_publish_stage_records_who_approved_and_which_version() -> None:
 
     assert result.details["approved_by"] == "reviewer-7"
     assert result.details["approved_version"] == 2
+
+
+# --- knowledge handoff tests (PIPE-32) --------------------------------------
+
+
+def test_knowledge_handoff_called_when_configured() -> None:
+    """Test that knowledge handoff is called when configured."""
+    knowledge = FakeKnowledgeHandoff()
+    versions = FakeVersionRepository()
+    versions.save_version(make_version(version_number=2, text="swahili text"))
+    stage, search = build_publish_stage(versions=versions, knowledge=knowledge)
+
+    result = stage.handle(
+        make_resource(
+            status=ResourceStatus.APPROVED,
+            source_metadata={"approved_by": "reviewer-7", "title": "Test Title"},
+            detected_language="sw",
+        )
+    )
+
+    assert result.next_status == ResourceStatus.PUBLISHED
+    assert len(knowledge.handoffs) == 1
+    assert knowledge.handoffs[0]["resource_id"] == "r1"
+    assert knowledge.handoffs[0]["translated_text"] == "swahili text"
+    assert knowledge.handoffs[0]["version_number"] == 2
+    assert knowledge.handoffs[0]["language"] == "sw"
+    assert knowledge.handoffs[0]["title"] == "Test Title"
+
+
+def test_knowledge_handoff_receives_correct_data_structure() -> None:
+    """Test that knowledge handoff receives all required data fields."""
+    knowledge = FakeKnowledgeHandoff()
+    versions = FakeVersionRepository()
+    versions.save_version(
+        make_version(
+            resource_id="r1",
+            version_number=3,
+            text="final approved text",
+        )
+    )
+    stage, _search = build_publish_stage(versions=versions, knowledge=knowledge)
+
+    resource = make_resource(
+        status=ResourceStatus.APPROVED,
+        source_url="https://health.gov/swahili-guide",
+        source_metadata={
+            "approved_by": "reviewer-8",
+            "title": "Maternal Health Guide",
+            "license_id": "CC-BY-4.0",
+        },
+        detected_language="sw",
+    )
+
+    stage.handle(resource)
+
+    handoff = knowledge.handoffs[0]
+    assert handoff["resource_id"] == "r1"
+    assert handoff["source_url"] == "https://health.gov/swahili-guide"
+    assert handoff["title"] == "Maternal Health Guide"
+    assert handoff["translated_text"] == "final approved text"
+    assert handoff["version_number"] == 3
+    assert handoff["language"] == "sw"
+    assert handoff["metadata"]["license_id"] == "CC-BY-4.0"
+    assert handoff["metadata"]["approved_by"] == "reviewer-8"
+
+
+def test_knowledge_handoff_not_called_when_not_configured() -> None:
+    """Test that knowledge handoff is skipped when not configured."""
+    versions = FakeVersionRepository()
+    versions.save_version(make_version(version_number=1, text="text"))
+    stage, search = build_publish_stage(versions=versions, knowledge=None)
+
+    result = stage.handle(
+        make_resource(
+            status=ResourceStatus.APPROVED,
+            source_metadata={"approved_by": "reviewer-7"},
+        )
+    )
+
+    assert result.next_status == ResourceStatus.PUBLISHED
+    assert result.details["knowledge_handoff"] is False
+    # Search index should still work
+    assert "r1" in search.indexed
+
+
+def test_knowledge_handoff_with_version_management() -> None:
+    """Test that knowledge handoff supports version management (machine vs human)."""
+    knowledge = FakeKnowledgeHandoff()
+    versions = FakeVersionRepository()
+    # Version 1 (machine) and Version 2 (human)
+    versions.save_version(make_version(version_number=1, text="machine translation"))
+    versions.save_version(make_version(version_number=2, text="human edited"))
+    stage, _search = build_publish_stage(versions=versions, knowledge=knowledge)
+
+    result = stage.handle(
+        make_resource(
+            status=ResourceStatus.APPROVED,
+            source_metadata={"approved_by": "reviewer-7"},
+        )
+    )
+
+    # Should handoff version 2 (human edited), not version 1
+    assert knowledge.handoffs[0]["version_number"] == 2
+    assert knowledge.handoffs[0]["translated_text"] == "human edited"
+    assert result.details["approved_version"] == 2
+
+
+def test_knowledge_handoff_preserves_search_index_functionality() -> None:
+    """Test that knowledge handoff doesn't break existing search index functionality."""
+    knowledge = FakeKnowledgeHandoff()
+    versions = FakeVersionRepository()
+    versions.save_version(make_version(version_number=1, text="searchable text"))
+    stage, search = build_publish_stage(versions=versions, knowledge=knowledge)
+
+    result = stage.handle(
+        make_resource(
+            status=ResourceStatus.APPROVED,
+            source_metadata={"title": "Searchable Title"},
+        )
+    )
+
+    # Both search index and knowledge handoff should work
+    assert "r1" in search.indexed
+    assert search.indexed["r1"].translated_text == "searchable text"
+    assert len(knowledge.handoffs) == 1
+    assert result.next_status == ResourceStatus.PUBLISHED

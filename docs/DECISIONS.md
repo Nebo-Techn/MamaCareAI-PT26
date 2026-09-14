@@ -100,4 +100,15 @@ Row-by-row list items keep each row readable while a dedicated table model is
 deferred past the sprint window.
 **Supersedes:** —
 
-*(Next entries start at DEC-0006, made by the team as real decisions come up.)*
+## DEC-0006 — Compliance gate implementation with strict-by-default posture
+Date: 2026-09-10 · Decided by: Dev A · Affects: pipeline (compliance, publish)
+
+**Decision:** Compliance gate implements 6 checks with strict-by-default posture:
+PII flag (highest priority), robots.txt/terms, licence allowlist, unknown licence
+blocking. Default allowlist: CC-BY-4.0, CC-BY-SA-4.0, public-domain, permission-granted.
+**Why:** Maternal health corpus contains clinical anecdotes — republishing medical
+stories is serious harm. Strict-by-default prevents accidental publication of
+unlicensed content. Configurable allowlist allows flexibility while maintaining safety.
+**Supersedes:** —
+
+*(Next entries start at DEC-0007, made by the team as real decisions come up.)*
