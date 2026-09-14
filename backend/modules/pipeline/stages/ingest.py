@@ -25,6 +25,7 @@ from __future__ import annotations
 from backend.modules.pipeline.domain.enums import ResourceStatus
 from backend.modules.pipeline.domain.errors import FetchError, UnsupportedSourceType
 from backend.modules.pipeline.domain.models import Resource
+from backend.modules.pipeline.observability.metrics import Metrics
 from backend.modules.pipeline.ports.deduplicator import Deduplicator
 from backend.modules.pipeline.ports.job_queue import JobQueue
 from backend.modules.pipeline.ports.object_store import ObjectStore
@@ -55,9 +56,10 @@ class IngestStage(Stage):
         object_store: ObjectStore,
         deduplicator: Deduplicator,
         max_attempts: int = 5,
+        metrics: Metrics | None = None,
     ) -> None:
         super().__init__(
-            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts
+            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts, metrics=metrics
         )
         # NOTE: a REGISTRY, not three fetchers. This stage must not know that
         # video or PDF fetchers exist — adding a source type must not edit this file.

@@ -24,6 +24,7 @@ from backend.modules.pipeline.domain.errors import ExtractionError
 from backend.modules.pipeline.domain.models import (
     Resource,
 )
+from backend.modules.pipeline.observability.metrics import Metrics
 from backend.modules.pipeline.ports.job_queue import JobQueue
 from backend.modules.pipeline.ports.object_store import ObjectStore
 from backend.modules.pipeline.ports.repositories import (
@@ -49,9 +50,10 @@ class ExtractStage(Stage):
         extractors: ExtractorRegistry,
         object_store: ObjectStore,
         max_attempts: int = 5,
+        metrics: Metrics | None = None,
     ) -> None:
         super().__init__(
-            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts
+            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts, metrics=metrics
         )
         self._documents = documents
         self._extractors = extractors

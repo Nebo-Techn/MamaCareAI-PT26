@@ -39,6 +39,11 @@ from backend.modules.pipeline.domain.models import AuditEvent, Job, Resource
 
 # Use the actual state machine from repository (it's now implemented)
 from backend.modules.pipeline.domain.state_machine import assert_can_transition
+from backend.modules.pipeline.observability.metrics import (
+    MetricNames,
+    Metrics,
+    NullMetrics,
+)
 from backend.modules.pipeline.ports.job_queue import JobQueue
 from backend.modules.pipeline.ports.repositories import (
     ResourceRepository,
@@ -88,13 +93,17 @@ class Stage(ABC):
         queue: JobQueue,
         reviews: ReviewRepository,
         max_attempts: int = 5,
+        metrics: Metrics | None = None,
     ) -> None:
         # Dependencies arrive here, always. A stage that builds its own S3
         # client in a method cannot be tested without AWS credentials.
+        # Metrics default to a no-op so existing constructions and every
+        # test keep working without a metrics server.
         self._resources = resources
         self._queue = queue
         self._reviews = reviews
         self._max_attempts = max_attempts
+        self._metrics = metrics if metrics is not None else NullMetrics()
 
     # --- What each subclass must declare -------------------------------------
 
@@ -160,11 +169,19 @@ class Stage(ABC):
                     f"Stage {self.name}: resource {job.resource_id} status "
                     f"{resource.status} not in accepts, skipping (already processed or out of order)"
                 )
+                self._metrics.increment(
+                    MetricNames.JOBS_PROCESSED,
+                    labels={"stage": self.name, "outcome": "skipped"},
+                )
                 return
 
-            # 3. DO THE WORK
+            # 3. DO THE WORK (timed even on failure — the failed duration
+            # is the one you want when finding the broken stage)
             try:
-                result = self.handle(resource)
+                with self._metrics.timed(
+                    MetricNames.STAGE_DURATION, labels={"stage": self.name}
+                ):
+                    result = self.handle(resource)
             except PipelineError as exc:
                 # 8. ERROR HANDLING - PipelineError subclasses
                 if exc.retryable and job.attempts < self._max_attempts:
@@ -192,6 +209,10 @@ class Stage(ABC):
                         not_before=not_before,
                     )
                     self._queue.publish(retry_job)
+                    self._metrics.increment(
+                        MetricNames.JOBS_PROCESSED,
+                        labels={"stage": self.name, "outcome": "retry"},
+                    )
                     return
                 else:
                     # Non-retryable or max attempts exceeded - dead letter
@@ -207,6 +228,10 @@ class Stage(ABC):
                     )
                     self._resources.save(failed_resource)
                     self._queue.send_to_dead_letter(job, reason=str(exc))
+                    self._metrics.increment(
+                        MetricNames.JOBS_PROCESSED,
+                        labels={"stage": self.name, "outcome": "dead_letter"},
+                    )
                     return
 
             except Exception as exc:
@@ -222,6 +247,10 @@ class Stage(ABC):
                 )
                 self._resources.save(failed_resource)
                 self._queue.send_to_dead_letter(job, reason=f"Unexpected error: {exc}")
+                self._metrics.increment(
+                    MetricNames.JOBS_PROCESSED,
+                    labels={"stage": self.name, "outcome": "dead_letter"},
+                )
                 return
 
             # 4. VALIDATE THE TRANSITION before writing
@@ -260,6 +289,10 @@ class Stage(ABC):
 
             # 9. EMIT SUCCESS METRICS
             duration = time.time() - start_time
+            self._metrics.increment(
+                MetricNames.JOBS_PROCESSED,
+                labels={"stage": self.name, "outcome": "success"},
+            )
             logger.info(
                 f"Stage {self.name}: completed {job.resource_id} in {duration:.3f}s, "
                 f"transition {resource.status} -> {result.next_status}"

@@ -34,6 +34,7 @@ Per-document detail belongs in logs, not metrics.
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -70,37 +71,165 @@ class Metrics(ABC):
             with metrics.timed("stage_duration_seconds", labels={"stage": "translate"}):
                 ...
 
-        TODO: implement here on the base class (perf_counter around the yield,
-        observe in a `finally`) so every subclass gets it for free. Use
-        `finally` — a failed stage's duration is exactly the one you want.
+        Implemented once here so every subclass gets it for free. The
+        `finally` is deliberate — a failed stage's duration is exactly the
+        one you want when finding the slow/broken stage in an incident.
         """
-        raise NotImplementedError
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.observe(name, time.perf_counter() - start, labels=labels)
 
 
 class NullMetrics(Metrics):
     """No-op sink for tests and local runs.
 
-    TODO: implement all three methods as `pass`. This is a legitimate Null
-    Object, not laziness — it means no test ever needs a metrics server, and
-    `if self._metrics is not None` never has to appear anywhere in the codebase.
+    A legitimate Null Object, not laziness — it means no test ever needs a
+    metrics server, and `if self._metrics is not None` never has to appear
+    anywhere in the codebase.
     """
+
+    def increment(self, name: str, *, labels: dict[str, str] | None = None) -> None:
+        """Discard a counter bump."""
+
+    def observe(
+        self, name: str, value: float, *, labels: dict[str, str] | None = None
+    ) -> None:
+        """Discard a histogram observation."""
+
+    def gauge(
+        self, name: str, value: float, *, labels: dict[str, str] | None = None
+    ) -> None:
+        """Discard a gauge setting."""
 
 
 class PrometheusMetrics(Metrics):
     """Prometheus-backed sink for production.
 
-    TODO (junior dev):
-      [ ] Declare Counter/Histogram/Gauge objects ONCE in __init__, keyed by
-          name, and reuse them. Re-creating a metric per call raises.
-      [ ] Choose histogram buckets deliberately. The defaults top out around
-          10s, which is useless for ASR jobs that take minutes — every slow job
-          lands in +Inf and you learn nothing.
-      [ ] Expose /metrics from the worker process (prometheus_client
-          start_http_server) and from the FastAPI app.
-      [ ] A background task should publish queue_depth and
-          review_queue_age_seconds on a timer — those are polled gauges, not
-          per-job events.
+    Skeleton for Sprint 3 (PIPE-31): counter/histogram/gauge routing with
+    once-only declaration and deliberate buckets is implemented and tested
+    through fakes. The client library (`prometheus-client`, still commented
+    out in `backend/requirements.txt`) is imported lazily — constructing
+    this class and calling it without the library installed is a safe no-op,
+    so clean checkouts, tests, and CI never need it.
+
+    Sprint 4 follow-ups (not this task): expose `/metrics` from the worker
+    process (`start_http_server`) and the FastAPI app, and run a background
+    task publishing the polled gauges (`queue_depth`,
+    `review_queue_age_seconds`) on a timer — those are polled, not per-job.
     """
+
+    # Buckets cover fast stages (ms) through minute-long jobs. The client
+    # defaults top out around 10s, which would land every slow job in +Inf.
+    DURATION_BUCKETS = (
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+    )
+    # Confidence scores live in [0, 1]; duration buckets would be meaningless.
+    CONFIDENCE_BUCKETS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.99, 1.0)
+
+    def __init__(self, *, registry: object = None) -> None:
+        self._registry = registry
+        self._counters: dict[str, object] = {}
+        self._histograms: dict[str, object] = {}
+        self._gauges: dict[str, object] = {}
+        try:
+            import prometheus_client  # noqa: F401
+
+            self._available = True
+        except ImportError:
+            self._available = False
+
+    @property
+    def available(self) -> bool:
+        """Whether the client library is installed (False == safe no-op)."""
+        return self._available
+
+    def _counter(self, name: str, labelnames: tuple[str, ...]) -> object | None:
+        if not self._available:
+            return None
+        metric = self._counters.get(name)
+        if metric is None:
+            from prometheus_client import Counter
+
+            kwargs: dict[str, object] = {"labelnames": labelnames}
+            if self._registry is not None:
+                kwargs["registry"] = self._registry
+            metric = Counter(name, f"Pipeline counter {name}", **kwargs)  # type: ignore[arg-type]
+            self._counters[name] = metric
+        return metric
+
+    def _histogram(self, name: str, labelnames: tuple[str, ...]) -> object | None:
+        if not self._available:
+            return None
+        metric = self._histograms.get(name)
+        if metric is None:
+            from prometheus_client import Histogram
+
+            buckets = (
+                self.CONFIDENCE_BUCKETS if "confidence" in name else self.DURATION_BUCKETS
+            )
+            kwargs: dict[str, object] = {"labelnames": labelnames, "buckets": buckets}
+            if self._registry is not None:
+                kwargs["registry"] = self._registry
+            metric = Histogram(name, f"Pipeline histogram {name}", **kwargs)  # type: ignore[arg-type]
+            self._histograms[name] = metric
+        return metric
+
+    def _gauge(self, name: str, labelnames: tuple[str, ...]) -> object | None:
+        if not self._available:
+            return None
+        metric = self._gauges.get(name)
+        if metric is None:
+            from prometheus_client import Gauge
+
+            kwargs: dict[str, object] = {"labelnames": labelnames}
+            if self._registry is not None:
+                kwargs["registry"] = self._registry
+            metric = Gauge(name, f"Pipeline gauge {name}", **kwargs)  # type: ignore[arg-type]
+            self._gauges[name] = metric
+        return metric
+
+    @staticmethod
+    def _label_tuple(labels: dict[str, str] | None) -> tuple[str, ...]:
+        return tuple(sorted((labels or {}).keys()))
+
+    def increment(self, name: str, *, labels: dict[str, str] | None = None) -> None:
+        """Bump a counter, creating it once and reusing it afterwards."""
+        metric = self._counter(name, self._label_tuple(labels))
+        if metric is None:
+            return
+        metric.labels(**(labels or {})).inc()  # type: ignore[attr-defined]
+
+    def observe(
+        self, name: str, value: float, *, labels: dict[str, str] | None = None
+    ) -> None:
+        """Record a histogram observation, creating it once and reusing it."""
+        metric = self._histogram(name, self._label_tuple(labels))
+        if metric is None:
+            return
+        metric.labels(**(labels or {})).observe(value)  # type: ignore[attr-defined]
+
+    def gauge(
+        self, name: str, value: float, *, labels: dict[str, str] | None = None
+    ) -> None:
+        """Set a gauge, creating it once and reusing it afterwards."""
+        metric = self._gauge(name, self._label_tuple(labels))
+        if metric is None:
+            return
+        metric.labels(**(labels or {})).set(value)  # type: ignore[attr-defined]
 
 
 class MetricNames:

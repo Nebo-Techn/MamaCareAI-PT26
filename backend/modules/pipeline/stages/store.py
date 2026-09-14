@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from ..domain.enums import ResourceStatus
 from ..domain.models import Resource
+from ..observability.metrics import Metrics
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import (
     DocumentRepository,
@@ -50,9 +51,10 @@ class StoreStage(Stage):
         search: SearchIndex,
         review_service: object,  # TODO: type as services.review_service.ReviewService
         max_attempts: int = 5,
+        metrics: Metrics | None = None,
     ) -> None:
         super().__init__(
-            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts
+            resources=resources, queue=queue, reviews=reviews, max_attempts=max_attempts, metrics=metrics
         )
         self._documents = documents
         self._versions = versions
