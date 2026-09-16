@@ -30,13 +30,16 @@ class FastTextDetector:
         try:
             import fasttext
             self._model = fasttext.load_model(self._model_path)
-        except Exception as e:
+        except (ImportError, OSError, RuntimeError, ValueError) as e:
             # Try langdetect as first fallback
             try:
-                import langdetect
-                self._use_langdetect = True
-                print(f"Warning: Could not load fastText model from {self._model_path}: {e}")
-                print("Falling back to langdetect library for language detection.")
+                import importlib.util
+                if importlib.util.find_spec("langdetect") is not None:
+                    self._use_langdetect = True
+                    print(f"Warning: Could not load fastText model from {self._model_path}: {e}")
+                    print("Falling back to langdetect library for language detection.")
+                else:
+                    raise ImportError("langdetect not available")
             except ImportError:
                 # Use heuristic as last fallback
                 self._use_heuristic = True
@@ -69,8 +72,8 @@ class FastTextDetector:
             language = top_label.replace("__label__", "")
 
             return DetectionResult(language=language, confidence=float(top_prob), alternatives=())
-        except Exception as e:
-            raise RuntimeError(f"Language detection failed: {e}")
+        except (ValueError, AttributeError, IndexError) as e:
+            raise RuntimeError(f"Language detection failed: {e}") from e
 
     def _langdetect_detect(self, text: str) -> DetectionResult:
         """Language detection using langdetect library.
@@ -98,8 +101,11 @@ class FastTextDetector:
             # langdetect uses standard codes like 'en', 'sw', etc.
             return DetectionResult(language=language, confidence=confidence, alternatives=alternatives)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             # If langdetect fails, fall back to heuristic
+            # We catch Exception here because langdetect can raise various exceptions
+            # including LangDetectException, AttributeError, etc. that we don't
+            # want to explicitly import or handle separately.
             print(f"Warning: langdetect failed: {e}. Falling back to heuristic detection.")
             return self._heuristic_detect(text)
 

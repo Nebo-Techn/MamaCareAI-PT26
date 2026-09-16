@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import pairwise
 
 import pytest
+
 from backend.modules.pipeline.domain.enums import ResourceStatus
 from backend.modules.pipeline.domain.errors import InvalidStateTransition
 from backend.modules.pipeline.domain.state_machine import (
