@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from urllib.parse import parse_qs, urlencode, urlunparse, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from ...ports.deduplicator import Deduplicator
 from ...ports.repositories import ResourceRepository
@@ -95,8 +95,7 @@ class ContentDeduplicator(Deduplicator):
         netloc = parsed.netloc.lower()
 
         # Drop "www." prefix
-        if netloc.startswith("www."):
-            netloc = netloc[4:]
+        netloc = netloc.removeprefix("www.")
 
         # Drop fragment
         fragment = ""

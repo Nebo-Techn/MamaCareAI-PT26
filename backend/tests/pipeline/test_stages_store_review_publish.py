@@ -30,7 +30,7 @@ from modules.pipeline.domain.models import (
     TranslationUnit,
 )
 from modules.pipeline.ports.search_index import IndexedResource
-from modules.pipeline.stages.publish import KnowledgeHandoffError, PublishStage
+from modules.pipeline.stages.publish import PublishStage
 from modules.pipeline.stages.review import ReviewStage
 from modules.pipeline.stages.store import StoreStage
 
@@ -355,7 +355,7 @@ def test_knowledge_handoff_called_when_configured() -> None:
     knowledge = FakeKnowledgeHandoff()
     versions = FakeVersionRepository()
     versions.save_version(make_version(version_number=2, text="swahili text"))
-    stage, search = build_publish_stage(versions=versions, knowledge=knowledge)
+    stage, _search = build_publish_stage(versions=versions, knowledge=knowledge)
 
     result = stage.handle(
         make_resource(
@@ -385,7 +385,7 @@ def test_knowledge_handoff_receives_correct_data_structure() -> None:
             text="final approved text",
         )
     )
-    stage, _search = build_publish_stage(versions=versions, knowledge=knowledge)
+    stage = build_publish_stage(versions=versions, knowledge=knowledge)[0]
 
     resource = make_resource(
         status=ResourceStatus.APPROVED,

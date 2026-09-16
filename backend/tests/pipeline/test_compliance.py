@@ -14,11 +14,9 @@ Tests all 6 compliance checks specified in the TODO:
 
 from __future__ import annotations
 
-import pytest
-
 from modules.pipeline.domain.enums import ResourceStatus, SourceType
 from modules.pipeline.domain.models import Resource
-from modules.pipeline.services.compliance import ComplianceGate, ComplianceDecision
+from modules.pipeline.services.compliance import ComplianceGate
 
 
 def make_resource(**overrides) -> Resource:
