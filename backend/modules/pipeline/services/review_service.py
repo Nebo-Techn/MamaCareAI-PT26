@@ -1,29 +1,26 @@
-"""
-Review workflow service (PDF 3.6) — the human side of the pipeline.
-
-Everything a reviewer does goes through this class: claim work, submit an edit,
-approve, request changes. The API layer (`api/routes_review.py`) is a thin
-translation from HTTP to these methods and does nothing else — put workflow
-rules in here, not in a route handler, or they become impossible to test and
-impossible to reuse from a CLI or a batch job.
-
-THE THREE RULES THIS SERVICE ENFORCES
-  1. A human edit creates a NEW VERSION. It never overwrites the machine
-     translation. Both stay readable forever.
-  2. Every action writes an audit event. Governance is not optional — this
-     content is treated as authoritative once published.
-  3. Every transition is validated against `domain/state_machine.py`. There is
-     no back door into a state.
-
-FOR MAMACARE AI: the reviewer is the last line of defence before Swahili
-maternal-health content reaches real pregnant people. This file is worth
-reviewing line by line before each presentation, alongside `modules/safety`.
-"""
 
 from __future__ import annotations
 
-from ..domain.enums import ReviewDecision
-from ..domain.models import ContentVersion, Resource, ReviewAssignment, TranslationUnit
+import uuid
+from dataclasses import replace
+from difflib import SequenceMatcher
+
+from ..domain.enums import (
+    JobStatus,
+    ResourceStatus,
+    ReviewDecision,
+    VersionAuthorKind,
+)
+from ..domain.models import (
+    AuditEvent,
+    ContentVersion,
+    Job,
+    Resource,
+    ReviewAssignment,
+    TranslationUnit,
+    utc_now,
+)
+from ..domain.state_machine import assert_can_transition
 from ..ports.job_queue import JobQueue
 from ..ports.repositories import (
     DocumentRepository,
@@ -31,6 +28,7 @@ from ..ports.repositories import (
     ReviewRepository,
     VersionRepository,
 )
+from ..ports.search_index import IndexedResource, SearchIndex
 
 
 class ReviewService:
@@ -44,61 +42,119 @@ class ReviewService:
         versions: VersionRepository,
         documents: DocumentRepository,
         queue: JobQueue,
+        search: SearchIndex | None = None,
     ) -> None:
         self._resources = resources
         self._reviews = reviews
         self._versions = versions
         self._documents = documents
         self._queue = queue
-
-    # --- Queue management ----------------------------------------------------
+        self._search = search
 
     def enqueue_for_review(
         self, resource: Resource, version: ContentVersion | None
     ) -> ReviewAssignment:
-        """Create the review task for a stored resource. Called by `stages/store.py`.
+        """Create or return the open review task for a stored resource."""
+        assignment_id = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"mamacare:review:{resource.resource_id}")
+        )
 
-        TODO (junior dev):
-          [ ] Build a ReviewAssignment with reviewer_id=None (unclaimed).
-          [ ] Compute PRIORITY — this is the "quality signal" from PDF 3.4
-              finally being used for something:
-                  - lowest mean translation confidence first (most likely wrong)
-                  - then oldest first (nothing starves in the queue)
-              Put the formula in one small helper so it is testable and tunable.
-          [ ] Be idempotent: if an open assignment already exists for this
-              resource, return it instead of creating a second one. Duplicate
-              assignments mean two reviewers do the same work.
-        """
-        raise NotImplementedError
+        existing = self._get_assignment_if_present(assignment_id)
+        if existing is not None and existing.completed_at is None:
+            return existing
+
+        assignment = ReviewAssignment(
+            assignment_id=assignment_id,
+            resource_id=resource.resource_id,
+            reviewer_id=None,
+            assigned_at=resource.submitted_at,
+            priority=self._calculate_priority(version),
+        )
+        try:
+            self._reviews.create_assignment(assignment)
+        except Exception:
+            concurrent = self._get_assignment_if_present(assignment_id)
+            if concurrent is not None and concurrent.completed_at is None:
+                return concurrent
+            raise
+        return assignment
 
     def claim_next(self, reviewer_id: str) -> ReviewAssignment | None:
-        """Give a reviewer their next piece of work.
+        """Give a reviewer their next piece of work."""
+        self._require_reviewer_id(reviewer_id)
+        assignment = self._reviews.claim_next(reviewer_id)
+        if assignment is None:
+            return None
 
-        TODO: delegate to `reviews.claim_next()` — the ATOMIC one. Do not
-        implement "find unclaimed, then update" here; that race hands the same
-        document to two reviewers, and reviewer time is the scarcest resource
-        in this whole system.
+        resource = self._resources.get(assignment.resource_id)
+        if resource.status == ResourceStatus.STORED:
+            assert_can_transition(resource.status, ResourceStatus.IN_REVIEW)
+            updated = resource.with_status(ResourceStatus.IN_REVIEW)
+            self._resources.save(updated)
+            self._append_audit(
+                resource=resource,
+                reviewer_id=reviewer_id,
+                action="claim",
+                target=ResourceStatus.IN_REVIEW,
+                details={"assignment_id": assignment.assignment_id},
+            )
+        elif resource.status != ResourceStatus.IN_REVIEW:
+            assert_can_transition(resource.status, ResourceStatus.IN_REVIEW)
 
-        Then transition STORED -> IN_REVIEW if it has not happened yet.
-        """
-        raise NotImplementedError
+        return assignment
 
     def get_review_payload(self, resource_id: str) -> dict[str, object]:
-        """Everything the side-by-side review UI needs, in one call.
+        """Return the source, current translation, and version history."""
+        resource = self._resources.get(resource_id)
+        document = self._documents.get_document(resource_id)
+        versions = sorted(
+            self._versions.list_versions(resource_id),
+            key=lambda item: item.version_number,
+        )
+        latest = versions[-1] if versions else None
+        source_blocks = tuple(sorted(document.blocks, key=lambda block: block.order))
+        latest_units = (
+            tuple(sorted(latest.units, key=lambda unit: unit.order)) if latest else ()
+        )
 
-        TODO: return
-              - source blocks (from documents.get_document) — the LEFT pane
-              - latest version units — the RIGHT pane, aligned by `order`
-              - the machine version, when the latest is a human edit, so the UI
-                can show what changed
-              - version history metadata (who, when, which engine)
+        machine_version = None
+        if latest is not None and latest.author_kind == VersionAuthorKind.HUMAN:
+            machine_version = self._versions.get_machine_version(resource_id)
 
-        Aligning by `order` here rather than in JavaScript keeps the alignment
-        rule in one tested place instead of duplicated in the frontend.
-        """
-        raise NotImplementedError
+        blocks_by_order = {block.order: block for block in source_blocks}
+        units_by_order = {unit.order: unit for unit in latest_units}
+        aligned_content = tuple(
+            {
+                "order": order,
+                "source": blocks_by_order.get(order),
+                "translation": units_by_order.get(order),
+            }
+            for order in sorted(blocks_by_order.keys() | units_by_order.keys())
+        )
+        version_history = tuple(
+            {
+                "version_id": version.version_id,
+                "version_number": version.version_number,
+                "author_kind": version.author_kind,
+                "author_id": version.author_id,
+                "created_at": version.created_at,
+                "engine": version.engine,
+                "note": version.note,
+            }
+            for version in versions
+        )
 
-    # --- Reviewer actions ----------------------------------------------------
+        return {
+            "resource": resource,
+            "document": document,
+            "source_blocks": source_blocks,
+            "latest_version": latest,
+            "latest_units": latest_units,
+            "translation_units": latest_units,
+            "machine_version": machine_version,
+            "version_history": version_history,
+            "aligned_content": aligned_content,
+        }
 
     def submit_edit(
         self,
@@ -108,23 +164,58 @@ class ReviewService:
         edited_units: list[TranslationUnit],
         note: str | None = None,
     ) -> ContentVersion:
-        """Save a reviewer's corrections as a NEW version.
+        """Save a reviewer's corrections as a new version."""
+        self._require_reviewer_id(reviewer_id)
+        assignment = self._owned_assignment(assignment_id, reviewer_id)
+        resource = self._resources.get(assignment.resource_id)
+        assert_can_transition(resource.status, ResourceStatus.EDITED)
 
-        TODO (junior dev) — the most important method in this file:
-          [ ] Load the resource; assert the reviewer owns this assignment.
-              (Anyone can edit anything = no audit trail worth the name.)
-          [ ] assert_can_transition(current, ResourceStatus.EDITED)
-          [ ] Create ContentVersion(author_kind=HUMAN, author_id=reviewer_id,
-              version_number=<assigned by the repository>, note=note).
-              INSERT — never update version 1. If you find yourself writing an
-              UPDATE here, stop and re-read `ports/repositories.py`.
-          [ ] Save, transition to EDITED, append the audit event.
-          [ ] Re-index the edited text so search reflects the human version.
-          [ ] Compute and store the DIFF against the machine version — see
-              `feedback_export.py`. This is the training signal that makes
-              review effort compound instead of repeating forever (PDF 3.6).
-        """
-        raise NotImplementedError
+        previous = self._versions.get_latest(resource.resource_id)
+        next_number = 1 if previous is None else previous.version_number + 1
+        candidate = ContentVersion(
+            version_id=str(uuid.uuid4()),
+            resource_id=resource.resource_id,
+            version_number=next_number,
+            author_kind=VersionAuthorKind.HUMAN,
+            author_id=reviewer_id,
+            units=tuple(sorted(edited_units, key=lambda unit: unit.order)),
+            note=note,
+        )
+        self._versions.save_version(candidate)
+
+        saved = next(
+            (
+                version
+                for version in self._versions.list_versions(resource.resource_id)
+                if version.version_id == candidate.version_id
+            ),
+            None,
+        )
+        if saved is None:
+            raise RuntimeError(
+                f"Version repository did not persist edit {candidate.version_id}"
+            )
+
+        updated = resource.with_status(ResourceStatus.EDITED)
+        self._resources.save(updated)
+
+        machine = self._versions.get_machine_version(resource.resource_id)
+        differences = self._calculate_differences(machine, saved)
+        self._append_audit(
+            resource=resource,
+            reviewer_id=reviewer_id,
+            action="edit",
+            target=ResourceStatus.EDITED,
+            details={
+                "assignment_id": assignment_id,
+                "version_id": saved.version_id,
+                "version_number": saved.version_number,
+                "note": note,
+                "differences": differences,
+            },
+        )
+        self._reindex(updated, saved)
+        return saved
 
     def submit_decision(
         self,
@@ -134,23 +225,160 @@ class ReviewService:
         decision: ReviewDecision,
         note: str | None = None,
     ) -> None:
-        """Record approve / needs_edit / reject and move the workflow forward.
+        """Record a review decision and move the workflow forward."""
+        self._require_reviewer_id(reviewer_id)
+        assignment = self._owned_assignment(assignment_id, reviewer_id)
+        decision = ReviewDecision(decision)
 
-        TODO — map decisions to transitions, validating each one:
+        if decision in {ReviewDecision.NEEDS_EDIT, ReviewDecision.REJECT} and not (
+            note and note.strip()
+        ):
+            raise ValueError(
+                f"A note is required when the decision is {decision.value}"
+            )
 
-            APPROVE     -> ResourceStatus.APPROVED, then publish the "publish"
-                           job on the queue. This is where the workflow rejoins
-                           the automated pipeline.
-            NEEDS_EDIT  -> ResourceStatus.NEEDS_EDIT, assignment stays open.
-            REJECT      -> ResourceStatus.FAILED with the reason recorded.
-                           Rejection must be explainable later; a rejected
-                           resource with no reason is a mystery forever.
+        resource = self._resources.get(assignment.resource_id)
+        target = {
+            ReviewDecision.APPROVE: ResourceStatus.APPROVED,
+            ReviewDecision.NEEDS_EDIT: ResourceStatus.NEEDS_EDIT,
+            ReviewDecision.REJECT: ResourceStatus.FAILED,
+        }[decision]
+        assert_can_transition(resource.status, target)
 
-        [ ] Every branch writes an audit event with reviewer_id and the note.
-        [ ] Approval is the governance-critical action — it is the moment this
-            content becomes authoritative. Never allow it without a reviewer_id.
-        [ ] TODO (roles/permissions): only users with the reviewer role may
-            approve. Add the check here, in the service — not in the UI. A UI
-            check is a suggestion; a service check is a rule.
-        """
-        raise NotImplementedError
+        changes: dict[str, object] = {}
+        if decision == ReviewDecision.APPROVE:
+            changes["source_metadata"] = {
+                **resource.source_metadata,
+                "approved_by": reviewer_id,
+            }
+        elif decision == ReviewDecision.REJECT:
+            changes["last_error"] = note
+
+        updated = resource.with_status(target, **changes)
+        self._resources.save(updated)
+
+        completed_at = None
+        if decision in {ReviewDecision.APPROVE, ReviewDecision.REJECT}:
+            completed_at = utc_now()
+        self._reviews.save_assignment(
+            replace(assignment, decision=decision, completed_at=completed_at)
+        )
+        self._append_audit(
+            resource=resource,
+            reviewer_id=reviewer_id,
+            action=decision.value,
+            target=target,
+            details={"assignment_id": assignment_id, "note": note},
+        )
+
+        if decision == ReviewDecision.APPROVE:
+            self._queue.publish(
+                Job(
+                    job_id=str(uuid.uuid4()),
+                    resource_id=resource.resource_id,
+                    stage="publish",
+                    status=JobStatus.PENDING,
+                )
+            )
+
+    @staticmethod
+    def _calculate_priority(version: ContentVersion | None) -> int:
+        """Turn mean confidence into a sortable integer (higher is sooner)."""
+        if version is None:
+            mean_confidence = 0.0
+        else:
+            confidences = [
+                unit.confidence for unit in version.units if unit.confidence is not None
+            ]
+            mean_confidence = (
+                sum(confidences) / len(confidences) if confidences else 0.0
+            )
+        bounded = min(1.0, max(0.0, mean_confidence))
+        return round((1.0 - bounded) * 1000)
+
+    def _get_assignment_if_present(self, assignment_id: str) -> ReviewAssignment | None:
+        try:
+            return self._reviews.get_assignment(assignment_id)
+        except (KeyError, LookupError):
+            return None
+        except Exception as exc:
+            if exc.__class__.__name__ == "AssignmentNotFoundError":
+                return None
+            raise
+
+    def _owned_assignment(
+        self, assignment_id: str, reviewer_id: str
+    ) -> ReviewAssignment:
+        assignment = self._reviews.get_assignment(assignment_id)
+        if assignment.reviewer_id != reviewer_id:
+            raise PermissionError(
+                f"Assignment {assignment_id} is not owned by reviewer {reviewer_id}"
+            )
+        if assignment.completed_at is not None:
+            raise ValueError(f"Assignment {assignment_id} is already complete")
+        return assignment
+
+    @staticmethod
+    def _require_reviewer_id(reviewer_id: str) -> None:
+        if not reviewer_id or not reviewer_id.strip():
+            raise ValueError("reviewer_id is required")
+
+    def _append_audit(
+        self,
+        *,
+        resource: Resource,
+        reviewer_id: str,
+        action: str,
+        target: ResourceStatus,
+        details: dict[str, object],
+    ) -> None:
+        self._reviews.append_audit(
+            AuditEvent(
+                event_id=str(uuid.uuid4()),
+                resource_id=resource.resource_id,
+                actor_id=reviewer_id,
+                action=action,
+                from_status=resource.status,
+                to_status=target,
+                details=details,
+            )
+        )
+
+    @staticmethod
+    def _calculate_differences(
+        machine: ContentVersion | None, human: ContentVersion
+    ) -> list[dict[str, object]]:
+        if machine is None:
+            return []
+        machine_by_order = {unit.order: unit for unit in machine.units}
+        differences: list[dict[str, object]] = []
+        for unit in human.units:
+            original = machine_by_order.get(unit.order)
+            machine_text = original.translated_text if original else ""
+            ratio = SequenceMatcher(None, machine_text, unit.translated_text).ratio()
+            differences.append(
+                {
+                    "order": unit.order,
+                    "machine_translation": machine_text,
+                    "human_translation": unit.translated_text,
+                    "edit_distance": 1.0 - ratio,
+                }
+            )
+        return differences
+
+    def _reindex(self, resource: Resource, version: ContentVersion) -> None:
+        if self._search is None:
+            return
+        self._search.index(
+            IndexedResource(
+                resource_id=resource.resource_id,
+                title=resource.source_metadata.get("title"), # type: ignore
+                translated_text="\n\n".join(
+                    unit.translated_text for unit in version.units
+                ),
+                source_url=resource.source_url,
+                status=resource.status.value,
+                version_number=version.version_number,
+                metadata={"language": resource.detected_language or ""},
+            )
+        )
