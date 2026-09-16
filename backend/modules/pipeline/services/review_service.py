@@ -156,45 +156,6 @@ class ReviewService:
             "aligned_content": aligned_content,
         }
 
-    def confirm_language(
-        self, *, resource_id: str, reviewer_id: str, language: str
-    ) -> None:
-        """Record a reviewer's language confirmation and resume processing."""
-        self._require_reviewer_id(reviewer_id)
-        resource = self._resources.get(resource_id)
-        if resource.status is not ResourceStatus.NEEDS_LANGUAGE_CONFIRMATION:
-            raise ValueError("Resource is not awaiting language confirmation")
-
-        updated = resource.with_status(
-            resource.status,
-            detected_language=language,
-            language_confidence=1.0,
-            source_metadata={
-                **resource.source_metadata,
-                "language_confirmed_by": reviewer_id,
-            },
-        )
-        self._resources.save(updated)
-        self._reviews.append_audit(
-            AuditEvent(
-                event_id=str(uuid.uuid4()),
-                resource_id=resource_id,
-                actor_id=reviewer_id,
-                action="confirm_language",
-                from_status=resource.status,
-                to_status=resource.status,
-                details={"language": language},
-            )
-        )
-        self._queue.publish(
-            Job(
-                job_id=str(uuid.uuid4()),
-                resource_id=resource_id,
-                stage="detect_language",
-                status=JobStatus.PENDING,
-            )
-        )
-
     def submit_edit(
         self,
         *,
