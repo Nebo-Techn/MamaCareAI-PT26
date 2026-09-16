@@ -2,7 +2,6 @@
 
 import pytest
 from modules.pipeline.adapters.storage.content_deduplicator import ContentDeduplicator
-from modules.pipeline.domain.enums import ResourceStatus, SourceType
 from modules.pipeline.domain.models import Resource
 from tests.pipeline.fakes import FakeResourceRepository
 
