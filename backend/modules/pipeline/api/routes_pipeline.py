@@ -15,14 +15,33 @@ endpoint that fetches arbitrary URLs is an open proxy, and someone will find it.
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 
+from ..adapters.storage.keys import build_raw_key
+from ..adapters.storage.sql_repositories import ResourceNotFoundError
 from ..container import Container
+from ..domain.enums import ResourceStatus, SourceType
 from ..domain.errors import PermanentError
+from ..domain.models import Job, Resource
 from ..services.submission import SubmissionService
-from .schemas import SubmitRequest, SubmitResponse
+from .schemas import (
+    PipelineStatsResponse,
+    ResourceStatusResponse,
+    SubmitRequest,
+    SubmitResponse,
+)
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -94,6 +113,188 @@ def submit_resource(
         resource_id=resource.resource_id,
         status=resource.status,
     )
+
+@router.post(
+    "/resources/upload",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_resource(
+    file: UploadFile,
+    container: Annotated[Container, Depends(get_container)],
+):
+        if file.filename is None:
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A file is required",
+        )
+
+        header = await file.read(5)
+
+        if header != b"%PDF-":
+          raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are supported",
+        )
+
+        await file.seek(0)
+
+        max_size = container.settings.fetch_max_bytes
+        total_size = 0
+
+        chunks: list[bytes] = []
+
+        while True:
+           chunk = await file.read(1024 * 1024)
+
+           if not chunk:
+               break
+
+           total_size += len(chunk)
+
+           if total_size > max_size:
+               raise HTTPException(
+                   status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                   detail="Uploaded file exceeds the maximum allowed size",
+               )
+
+           chunks.append(chunk)
+
+        content = b"".join(chunks)
+
+        resource = Resource(
+        resource_id=str(uuid4()),
+        source_type=SourceType.PDF,
+        source_url=None,
+        status=ResourceStatus.FETCHED,
+    )
+
+        raw_key = build_raw_key(resource, extension="pdf")
+
+        stored_key = container.object_store.put(
+        raw_key,
+        content,
+        content_type="application/pdf",
+    )
+
+        resource = resource.with_status(
+        ResourceStatus.FETCHED,
+        raw_object_key=stored_key,
+        content_hash=sha256(content).hexdigest(),
+    )
+        container.resources.add(resource)
+
+        job = Job(
+        job_id=str(uuid4()),
+        resource_id=resource.resource_id,
+        stage="extract",
+    )
+
+        container.queue.publish(job)
+
+        return SubmitResponse(
+        resource_id=resource.resource_id,
+        status=resource.status,
+    )
+
+
+@router.get(
+   "/stats",
+   response_model=PipelineStatsResponse,
+)
+def get_stats(
+   container: Annotated[Container, Depends(get_container)],
+) -> PipelineStatsResponse:
+   stages = ("ingest", "extract", "detect_language", "translate", "store", "review", "publish")
+   queue_depth = {stage: container.queue.depth(stage) for stage in stages}
+
+   page_size = 500
+   resource_counts: dict[str, int] = {}
+   for resource_status in ResourceStatus:
+       total = 0
+       offset = 0
+       while True:
+           items = container.resources.list_by_status(
+               resource_status,
+               limit=page_size,
+               offset=offset,
+           )
+           if not items:
+               break
+           total += len(items)
+           if len(items) < page_size:
+               break
+           offset += page_size
+       resource_counts[resource_status.value] = total
+
+   return PipelineStatsResponse(
+       queue_depth=queue_depth,
+       resource_counts=resource_counts,
+   )
+
+
+@router.get(
+   "/resources",
+   response_model=list[ResourceStatusResponse],
+)
+def list_resources(
+    container: Annotated[Container, Depends(get_container)],
+    status: Annotated[ResourceStatus, Query(...)],
+    limit: Annotated[int, Query(ge=1)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ResourceStatusResponse]:
+   effective_limit = min(limit, 500)
+   resources = container.resources.list_by_status(
+       status,
+       limit=effective_limit,
+       offset=offset,
+   )
+
+   return [
+       ResourceStatusResponse(
+           resource_id=resource.resource_id,
+           source_url=resource.source_url,
+           source_type=resource.source_type,
+           status=resource.status,
+           detected_language=resource.detected_language,
+           language_confidence=resource.language_confidence,
+           submitted_at=resource.submitted_at,
+           updated_at=resource.updated_at,
+           error=resource.last_error,
+       )
+       for resource in resources
+   ]
+
+
+@router.get(
+   "/resources/{resource_id}",
+   response_model=ResourceStatusResponse,
+)
+def get_resource_status(
+   resource_id: str,
+   container: Annotated[Container, Depends(get_container)],
+) -> ResourceStatusResponse:
+   try:
+       resource = container.resources.get(resource_id)
+   except ResourceNotFoundError as exc:
+       raise HTTPException(
+           status_code=status.HTTP_404_NOT_FOUND,
+           detail="Resource not found",
+       ) from exc
+
+   current_version = container.versions.get_latest(resource_id)
+
+   return ResourceStatusResponse(
+       resource_id=resource.resource_id,
+       source_url=resource.source_url,
+       source_type=resource.source_type,
+       status=resource.status,
+       detected_language=resource.detected_language,
+       language_confidence=resource.language_confidence,
+       submitted_at=resource.submitted_at,
+       updated_at=resource.updated_at,
+       current_version=current_version.version_number if current_version is not None else None,
+       error=resource.last_error,
+   )
 
 # TODO (junior dev): create the router and implement the endpoints.
 #

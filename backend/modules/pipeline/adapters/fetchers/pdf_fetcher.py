@@ -14,7 +14,16 @@ TWO ENTRY POINTS
 
 from __future__ import annotations
 
+import httpx
+import pymupdf
+
 from ...domain.enums import SourceType
+from ...domain.errors import (
+    ExtractionError,
+    FetchError,
+    PermanentError,
+    ProviderRateLimited,
+)
 from ...ports.fetcher import FetchResult, SourceFetcher
 
 
@@ -27,6 +36,11 @@ class PdfFetcher(SourceFetcher):
         self._timeout = timeout_seconds
         self._max_bytes = max_bytes
         self._user_agent = user_agent
+        self._client = httpx.Client(
+            timeout=timeout_seconds,
+            headers={"User-Agent": user_agent},
+            follow_redirects=True,
+        )
 
     @property
     def source_type(self) -> SourceType:
@@ -52,4 +66,77 @@ class PdfFetcher(SourceFetcher):
           [ ] Same status-code mapping as the web fetcher (5xx retryable,
               404/403 permanent).
         """
-        raise NotImplementedError
+        try:
+            with self._client.stream("GET", source_url) as response:
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    retry_after_seconds = float(retry_after) if retry_after else None
+                    raise ProviderRateLimited(
+                        f"Rate limited fetching {source_url}",
+                        retry_after_seconds=retry_after_seconds,
+                    )
+
+                if response.status_code in (404, 403):
+                    raise PermanentError(
+                        f"{response.status_code} fetching {source_url}"
+                    )
+
+                if response.status_code >= 500:
+                    raise FetchError(f"{response.status_code} fetching {source_url}")
+
+                response.raise_for_status()
+
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > self._max_bytes:
+                        raise PermanentError(
+                            f"{source_url} exceeded max_bytes={self._max_bytes}"
+                        )
+                    chunks.append(chunk)
+
+                content = b"".join(chunks)
+                if not content.startswith(b"%PDF-"):
+                    raise PermanentError(f"{source_url} did not return a PDF")
+
+                metadata: dict[str, object] = {
+                    "final_url": str(response.url),
+                    "content_type": response.headers.get("content-type", ""),
+                    "last_modified": response.headers.get("last-modified"),
+                    "etag": response.headers.get("etag"),
+                    "content_length": response.headers.get("content-length"),
+                }
+
+                try:
+                    with pymupdf.open(stream=content, filetype="pdf") as document:
+                        if document.is_encrypted:
+                            raise ExtractionError(
+                                f"Encrypted PDF cannot be processed: {source_url}"
+                            )
+
+                        pdf_metadata = document.metadata
+                        for key, metadata_key in (
+                            ("title", "title"),
+                            ("author", "author"),
+                            ("creationDate", "creation_date"),
+                        ):
+                            value = pdf_metadata.get(key)
+                            if value:
+                                metadata[metadata_key] = value
+                except pymupdf.FileDataError as exc:
+                    raise ExtractionError(
+                        f"Unable to inspect PDF: {source_url}"
+                    ) from exc
+
+                return FetchResult(
+                    content=content,
+                    content_type=response.headers.get("content-type")
+                    or "application/pdf",
+                    metadata=metadata,
+                    existing_captions=None,
+                )
+        except httpx.TimeoutException as exc:
+            raise FetchError(f"Timeout fetching {source_url}") from exc
+        except httpx.TransportError as exc:
+            raise FetchError(f"Connection error fetching {source_url}") from exc
