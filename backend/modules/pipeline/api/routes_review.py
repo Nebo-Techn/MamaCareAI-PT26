@@ -1,79 +1,271 @@
-"""
-Review API (PDF 3.6) — the backend for the human review UI.
-
-    GET  /review/next                     claim the next item
-    GET  /review/{resource_id}            side-by-side payload
-    POST /review/{assignment_id}/edit     save corrections as a new version
-    POST /review/{assignment_id}/decision approve / needs_edit / reject
-    GET  /review/{resource_id}/versions   version history
-    GET  /review/{resource_id}/audit      who did what, when
-    POST /review/{resource_id}/language   confirm a low-confidence language
-
-Every handler is a thin wrapper over `ReviewService`. The workflow rules live
-there so they are testable without HTTP and cannot be bypassed by a second
-client.
-
-PDF 5 suggests a React app or an adapted Label Studio for the UI itself. Either
-way it talks to these endpoints — which is exactly why the workflow does not
-live in the frontend. A rule enforced in JavaScript is a suggestion.
-"""
+"""HTTP endpoints used by the human-review application."""
 
 from __future__ import annotations
 
-# TODO (junior dev): create the router and implement the endpoints.
-#
-#     router = APIRouter(prefix="/review", tags=["review"])
-#
-#
-# GET /next  ->  ReviewPayloadResponse | 204 No Content
-#   [ ] ReviewService.claim_next(reviewer_id from the auth context).
-#   [ ] 204 when the queue is empty — a normal state, not an error.
-#   [ ] The reviewer_id comes from AUTH, never from a query parameter. A
-#       client-supplied reviewer id makes the entire audit trail worthless.
-#
-# GET /{resource_id}  ->  ReviewPayloadResponse
-#   [ ] ReviewService.get_review_payload().
-#   [ ] Returns source blocks and translated units ALIGNED BY `order` — the
-#       side-by-side view. Align on the server, not in the frontend, so the
-#       rule exists once and is tested.
-#
-# POST /{assignment_id}/edit  ->  201 Created
-#   [ ] ReviewService.submit_edit(). Creates a NEW VERSION; never an update.
-#   [ ] 403 if the caller does not own the assignment.
-#   [ ] 201 with the new version number — it created a resource.
-#
-# POST /{assignment_id}/decision  ->  200 OK
-#   [ ] ReviewService.submit_decision().
-#   [ ] APPROVE is the governance-critical action: it makes this content
-#       authoritative and queues publication. Require the reviewer role, and
-#       check it in the SERVICE as well as here.
-#   [ ] Require a note for NEEDS_EDIT and REJECT.
-#
-# GET /{resource_id}/versions  ->  list[VersionSummary]
-#   [ ] Full history: who, when, which engine, machine vs human. Shows the
-#       reviewer that their edits are preserved rather than overwriting the MT.
-#
-# GET /{resource_id}/audit  ->  list[AuditEventSchema]
-#   [ ] The governance trail. Read-only, always.
-#
-# POST /{resource_id}/language  ->  200 OK
-#   [ ] Confirm the language for a NEEDS_LANGUAGE_CONFIRMATION resource
-#       (PDF 3.3), then re-enqueue "detect_language". The stage sees the
-#       human-confirmed language, trusts it, and continues.
-#   [ ] Record WHO confirmed it in the audit trail — the stage checks for that
-#       marker so it never overwrites a human decision with a model guess.
-#
-# --- Cross-cutting for this router ---
-#
-# ROLES AND PERMISSIONS (PDF 3.6, Governance):
-#   [ ] Reviewer  : claim, edit, request changes
-#   [ ] Approver  : everything above, plus approve/publish
-#   [ ] Read-only : view payloads, versions, and audit
-#   Enforce in the service layer. Route-level checks are for good error
-#   messages; the service check is the actual rule.
-#
-# PERFORMANCE:
-#   [ ] The payload endpoint is called on every item a reviewer opens. Keep it
-#       to a small number of queries — an N+1 over versions will make the
-#       review UI feel slow, and reviewer throughput is the pipeline's real
-#       bottleneck.
+from datetime import datetime
+from typing import Annotated, Any, cast
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
+
+from ..container import Container
+from ..domain.enums import ResourceStatus, ReviewDecision, VersionAuthorKind
+from ..domain.models import (
+    ContentVersion,
+    NormalizedDocument,
+    Resource,
+    TextBlock,
+    TranslationUnit,
+)
+from ..services.review_service import ReviewService
+from .schemas import (
+    BlockSchema,
+    DecisionRequest,
+    EditRequest,
+    ReviewPayloadResponse,
+    UnitSchema,
+)
+
+router = APIRouter(prefix="/review", tags=["review"])
+
+
+class ReviewUser(BaseModel):
+    """The authenticated identity supplied by the application's auth layer."""
+
+    user_id: str
+    roles: set[str] = Field(default_factory=set)
+
+
+class VersionSummary(BaseModel):
+    version_number: int
+    author_kind: VersionAuthorKind
+    author_id: str | None
+    created_at: datetime
+    engine: str | None
+    note: str | None
+
+
+class AuditEventSchema(BaseModel):
+    event_id: str
+    resource_id: str
+    actor_id: str
+    action: str
+    from_status: ResourceStatus | None
+    to_status: ResourceStatus | None
+    at: datetime
+    details: dict[str, object]
+
+
+class LanguageConfirmationRequest(BaseModel):
+    language: str = Field(min_length=2, max_length=8, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?$")
+
+
+def get_container(request: Request) -> Container:
+    container = getattr(request.app.state, "container", None)
+    if container is None:
+        raise RuntimeError("Pipeline container is not initialized")
+    return container
+
+
+def get_review_service(
+    container: Annotated[Container, Depends(get_container)],
+) -> ReviewService:
+    return ReviewService(
+        resources=container.resources,
+        reviews=container.reviews,
+        versions=container.versions,
+        documents=container.documents,
+        queue=container.queue,
+        search=container.search,
+    )
+
+
+def get_current_user(request: Request) -> ReviewUser:
+    """Read the identity installed by authentication middleware."""
+    principal: Any = getattr(request.state, "user", None)
+    if principal is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    if isinstance(principal, ReviewUser):
+        return principal
+    if isinstance(principal, dict):
+        user_id = principal.get("user_id") or principal.get("id")
+        if not isinstance(user_id, str) or not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication identity")
+        return ReviewUser(
+            user_id=user_id,
+            roles=set(principal.get("roles", ())),
+        )
+    user_id = getattr(principal, "user_id", getattr(principal, "id", None))
+    if not isinstance(user_id, str) or not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication identity")
+    return ReviewUser(
+        user_id=user_id,
+        roles=set(getattr(principal, "roles", ())),
+    )
+
+
+def _require_role(user: ReviewUser, *allowed: str) -> None:
+    if not user.roles.intersection(allowed):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+
+def _payload(service: ReviewService, resource_id: str) -> ReviewPayloadResponse:
+    payload = service.get_review_payload(resource_id)
+    resource = cast(Resource, payload["resource"])
+    document = cast(NormalizedDocument, payload["document"])
+    latest = cast(ContentVersion | None, payload["latest_version"])
+    machine = cast(ContentVersion | None, payload["machine_version"])
+    if latest is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Resource has no translation version to review",
+        )
+    return ReviewPayloadResponse(
+        resource_id=resource.resource_id,
+        title=document.title,
+        source_language=resource.detected_language,
+        source_blocks=[
+            BlockSchema.model_validate(block, from_attributes=True)
+            for block in cast(tuple[TextBlock, ...], payload["source_blocks"])
+        ],
+        translated_units=[
+            UnitSchema.model_validate(unit, from_attributes=True)
+            for unit in cast(tuple[TranslationUnit, ...], payload["latest_units"])
+        ],
+        machine_units=(
+            [
+                UnitSchema.model_validate(unit, from_attributes=True)
+                for unit in machine.units
+            ]
+            if machine is not None
+            else None
+        ),
+        version_number=latest.version_number,
+        engine=latest.engine,
+    )
+
+
+@router.get("/next", response_model=ReviewPayloadResponse)
+def claim_next(
+    response: Response,
+    user: Annotated[ReviewUser, Depends(get_current_user)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+) -> ReviewPayloadResponse | None:
+    _require_role(user, "reviewer", "approver")
+    assignment = service.claim_next(user.user_id)
+    if assignment is None:
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return None
+    return _payload(service, assignment.resource_id)
+
+
+@router.get("/{resource_id}/versions", response_model=list[VersionSummary])
+def list_versions(
+    resource_id: str,
+    user: Annotated[ReviewUser, Depends(get_current_user)],
+    container: Annotated[Container, Depends(get_container)],
+) -> list[VersionSummary]:
+    _require_role(user, "read_only", "reviewer", "approver")
+    return [
+        VersionSummary(
+            version_number=item.version_number,
+            author_kind=item.author_kind,
+            author_id=item.author_id,
+            created_at=item.created_at,
+            engine=item.engine,
+            note=item.note,
+        )
+        for item in container.versions.list_versions(resource_id)
+    ]
+
+
+@router.get("/{resource_id}/audit", response_model=list[AuditEventSchema])
+def list_audit(
+    resource_id: str,
+    user: Annotated[ReviewUser, Depends(get_current_user)],
+    container: Annotated[Container, Depends(get_container)],
+) -> list[AuditEventSchema]:
+    _require_role(user, "read_only", "reviewer", "approver")
+    return [
+        AuditEventSchema.model_validate(event, from_attributes=True)
+        for event in container.reviews.list_audit(resource_id)
+    ]
+
+
+@router.post("/{assignment_id}/edit", status_code=status.HTTP_201_CREATED)
+def submit_edit(
+    assignment_id: str,
+    payload: EditRequest,
+    user: Annotated[ReviewUser, Depends(get_current_user)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+) -> dict[str, int]:
+    _require_role(user, "reviewer", "approver")
+    units = [
+        TranslationUnit(
+            order=unit.order,
+            source_text=unit.source_text,
+            translated_text=unit.translated_text,
+            confidence=unit.confidence,
+        )
+        for unit in payload.units
+    ]
+    try:
+        version = service.submit_edit(
+            assignment_id=assignment_id,
+            reviewer_id=user.user_id,
+            edited_units=units,
+            note=payload.note,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return {"version_number": version.version_number}
+
+
+@router.post("/{assignment_id}/decision", status_code=status.HTTP_200_OK)
+def submit_decision(
+    assignment_id: str,
+    payload: DecisionRequest,
+    user: Annotated[ReviewUser, Depends(get_current_user)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+) -> dict[str, str]:
+    _require_role(user, "reviewer", "approver")
+    if payload.decision is ReviewDecision.APPROVE:
+        _require_role(user, "approver")
+    if payload.decision in {ReviewDecision.NEEDS_EDIT, ReviewDecision.REJECT} and not (payload.note or "").strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A note is required for this decision")
+    try:
+        service.submit_decision(
+            assignment_id=assignment_id,
+            reviewer_id=user.user_id,
+            decision=payload.decision,
+            note=payload.note,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return {"decision": payload.decision.value}
+
+
+@router.post("/{resource_id}/language", status_code=status.HTTP_200_OK)
+def confirm_language(
+    resource_id: str,
+    payload: LanguageConfirmationRequest,
+    user: Annotated[ReviewUser, Depends(get_current_user)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+) -> dict[str, str]:
+    _require_role(user, "reviewer", "approver")
+    service.confirm_language(
+        resource_id=resource_id,
+        reviewer_id=user.user_id,
+        language=payload.language.lower(),
+    )
+    return {"language": payload.language.lower()}
+
+
+@router.get("/{resource_id}", response_model=ReviewPayloadResponse)
+def get_review_payload(
+    resource_id: str,
+    user: Annotated[ReviewUser, Depends(get_current_user)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+) -> ReviewPayloadResponse:
+    _require_role(user, "read_only", "reviewer", "approver")
+    return _payload(service, resource_id)
