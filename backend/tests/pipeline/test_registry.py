@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from backend.modules.pipeline.domain.enums import SourceType
 from backend.modules.pipeline.domain.errors import (
     ExtractionError,
