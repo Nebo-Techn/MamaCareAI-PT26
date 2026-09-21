@@ -13,7 +13,6 @@ extractor. Covers the three things the port contract cares about:
 from __future__ import annotations
 
 import pytest
-
 from modules.pipeline.adapters.extractors.html_extractor import HtmlExtractor
 from modules.pipeline.domain.errors import ExtractionError
 

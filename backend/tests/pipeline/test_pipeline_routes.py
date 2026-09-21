@@ -2,7 +2,6 @@ from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from modules.pipeline.api.routes_pipeline import router
 from modules.pipeline.container import build_test_container
 from modules.pipeline.domain.enums import ResourceStatus, SourceType
