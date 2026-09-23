@@ -45,7 +45,8 @@ class SubmissionService:
         self._queue = queue
         self._source_register = source_register
 
-    def _validate_url(self, source_url: str) -> None:
+    @staticmethod
+    def _validate_url(source_url: str) -> None:
         """Validate URL scheme and prevent SSRF against local/private hosts."""
         parsed = urlparse(source_url)
 

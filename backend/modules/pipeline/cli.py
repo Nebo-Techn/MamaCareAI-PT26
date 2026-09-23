@@ -100,6 +100,89 @@ def _cmd_submit(args: argparse.Namespace) -> int:
         return 1
 
 
+def _cmd_process_url(args: argparse.Namespace) -> int:
+    """Synchronously fetch, extract, and conditionally translate one URL.
+
+    This command is intentionally independent of the queued pipeline so it is
+    useful for local, one-off ingestion and produces the final text on stdout.
+    English content is translated to the configured target language (Swahili
+    by default); content in any other detected language is returned unchanged.
+    """
+    try:
+        from .adapters.translation.chunker import Chunker
+        from .config import PipelineSettings
+        from .container import (
+            build_detector,
+            build_extractors,
+            build_fetchers,
+            build_translator,
+        )
+        from .domain.enums import SourceType
+        from .services.submission import SubmissionService
+
+        settings = PipelineSettings()
+        SubmissionService._validate_url(args.url)
+        source_type = (
+            SourceType(args.type)
+            if args.type
+            else SubmissionService._infer_source_type(args.url)
+        )
+
+        fetch_result = build_fetchers(settings).get(source_type).fetch(args.url)
+        extractor = build_extractors(settings).select(
+            fetch_result.content_type, fetch_result.content
+        )
+        document = extractor.extract(
+            "cli-process-url",
+            fetch_result.content,
+            metadata={
+                **fetch_result.metadata,
+                "content_type": fetch_result.content_type,
+            },
+        )
+        extracted_text = "\n\n".join(
+            block.text for block in document.blocks if block.text.strip()
+        )
+        if not extracted_text:
+            raise ValueError("extractor returned no usable text")
+
+        detection = build_detector(settings).detect(extracted_text)
+        if detection.language.casefold() != "en":
+            print(f"=== ORIGINAL ({detection.language}) ===")
+            print(extracted_text)
+            print("\n=== TRANSLATED (sw) ===")
+            print("Translation skipped: detected language is not English.")
+            return 0
+
+        translator = build_translator(settings)
+        if not translator.supports("en", settings.target_language):
+            raise ValueError(
+                f"{translator.engine_name} does not support English to "
+                f"{settings.target_language} translation"
+            )
+        chunks = Chunker(max_chars=settings.translation_max_chunk_chars).chunk(
+            document.blocks
+        )
+        translated = translator.translate_batch(
+            [chunk.text for chunk in chunks],
+            source_language="en",
+            target_language=settings.target_language,
+        )
+        if len(translated) != len(chunks):
+            raise ValueError(
+                "translator returned a different number of chunks than it received"
+            )
+        translated_text = "\n\n".join(chunk.text for chunk in translated)
+        print("=== ORIGINAL (en) ===")
+        print(extracted_text)
+        print(f"\n=== TRANSLATED ({settings.target_language}) ===")
+        print(translated_text)
+        return 0
+    except Exception as exc:  # noqa: BLE001 - CLI boundary reports clean errors
+        print(f"process-url failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     container = _build_container_for_cli()
     rid = args.resource_id
@@ -430,6 +513,20 @@ def main(argv: list[str] | None = None) -> int:
     p_submit.add_argument("--type", choices=["web", "pdf", "video"], default=None, help="Source type (inferred if not given)")
     p_submit.add_argument("--metadata", default=None, help="JSON metadata string")
     p_submit.set_defaults(func=_cmd_submit)
+
+    # process-url: synchronous one-command fetch -> extract -> translate
+    p_process = sub.add_parser(
+        "process-url",
+        help="Fetch and extract a URL, translating English content to Swahili",
+    )
+    p_process.add_argument("--url", required=True, help="Source URL")
+    p_process.add_argument(
+        "--type",
+        choices=["web", "pdf", "video"],
+        default=None,
+        help="Source type (inferred if not given)",
+    )
+    p_process.set_defaults(func=_cmd_process_url)
 
     # status
     p_status = sub.add_parser("status", help="Show resource status")

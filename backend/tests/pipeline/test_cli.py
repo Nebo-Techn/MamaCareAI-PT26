@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from types import SimpleNamespace
 
 import backend.modules.pipeline.cli as cli_module
 from backend.modules.pipeline.cli import main
@@ -22,6 +23,9 @@ from backend.modules.pipeline.domain.models import (
     TextBlock,
     TranslationUnit,
 )
+from backend.modules.pipeline.ports.fetcher import FetchResult
+from backend.modules.pipeline.ports.language_detector import DetectionResult
+from backend.modules.pipeline.ports.translator import TranslatedChunk
 
 
 def test_cli_submit_prints_id(capsys):
@@ -29,6 +33,93 @@ def test_cli_submit_prints_id(capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert len(out.strip()) > 0  # resource_id
+
+
+def _patch_process_url_adapters(monkeypatch, *, language: str) -> SimpleNamespace:
+    from backend.modules.pipeline import container as container_module
+
+    document = NormalizedDocument(
+        resource_id="cli-process-url",
+        title="Guide",
+        author=None,
+        published_date=None,
+        blocks=(TextBlock(order=0, kind="paragraph", text="The guide is useful."),),
+        source_metadata={},
+    )
+
+    class Fetcher:
+        def fetch(self, url):
+            return FetchResult(b"<p>The guide is useful.</p>", "text/html")
+
+    class Fetchers:
+        def get(self, source_type):
+            return Fetcher()
+
+    class Extractor:
+        def extract(self, resource_id, content, *, metadata):
+            return document
+
+    class Extractors:
+        def select(self, content_type, content):
+            return Extractor()
+
+    class Detector:
+        def detect(self, text):
+            return DetectionResult(language=language, confidence=0.99)
+
+    class Translator:
+        engine_name = "fake"
+
+        def __init__(self):
+            self.calls = 0
+
+        def supports(self, source_language, target_language):
+            return True
+
+        def translate_batch(self, texts, *, source_language, target_language="sw"):
+            self.calls += 1
+            return [TranslatedChunk("Mwongozo ni muhimu.") for _ in texts]
+
+    translator = Translator()
+    monkeypatch.setattr(container_module, "build_fetchers", lambda settings: Fetchers())
+    monkeypatch.setattr(container_module, "build_extractors", lambda settings: Extractors())
+    monkeypatch.setattr(container_module, "build_detector", lambda settings: Detector())
+    monkeypatch.setattr(container_module, "build_translator", lambda settings: translator)
+    monkeypatch.setattr(
+        "backend.modules.pipeline.services.submission.socket.getaddrinfo",
+        lambda *args, **kwargs: [(None, None, None, None, ("93.184.216.34", 0))],
+    )
+    return SimpleNamespace(translator=translator)
+
+
+def test_process_url_translates_english(capsys, monkeypatch):
+    adapters = _patch_process_url_adapters(monkeypatch, language="en")
+
+    rc = main(["process-url", "--url", "https://example.org/guide"])
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == (
+        "=== ORIGINAL (en) ===\n"
+        "The guide is useful.\n\n"
+        "=== TRANSLATED (sw) ===\n"
+        "Mwongozo ni muhimu."
+    )
+    assert adapters.translator.calls == 1
+
+
+def test_process_url_leaves_non_english_unchanged(capsys, monkeypatch):
+    adapters = _patch_process_url_adapters(monkeypatch, language="sw")
+
+    rc = main(["process-url", "--url", "https://example.org/guide"])
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == (
+        "=== ORIGINAL (sw) ===\n"
+        "The guide is useful.\n\n"
+        "=== TRANSLATED (sw) ===\n"
+        "Translation skipped: detected language is not English."
+    )
+    assert adapters.translator.calls == 0
 
 
 def test_cli_status_not_found():
