@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Translation review | MamaCare AI</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --background: #f4f7f5;
+        --surface: #fff;
+        --surface-muted: #f8faf9;
+        --text: #18312a;
+        --muted: #62736d;
+        --border: #d5dfdb;
+        --primary: #08785f;
+        --primary-hover: #06634f;
+        --focus: #f1aa33;
+        --success: #126b42;
+        --error: #a52b2b;
+        --radius: 0.75rem;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+          BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      body { min-width: 20rem; margin: 0; background: var(--background); color: var(--text); line-height: 1.5; }
+      button, textarea { font: inherit; }
+      .page-header, main { width: min(90rem, calc(100% - 2rem)); margin-inline: auto; }
+      .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding-block: 2rem 1.25rem; }
+      h1, h2, p { margin-top: 0; }
+      h1 { margin-bottom: 0.25rem; font-size: clamp(1.5rem, 3vw, 2rem); line-height: 1.2; }
+      .eyebrow { margin-bottom: 0.4rem; color: var(--primary); font-size: 0.75rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+      .metadata { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin: 0; color: var(--muted); font-size: 0.875rem; }
+      .version { flex: 0 0 auto; border: 1px solid var(--border); border-radius: 999px; padding: 0.35rem 0.7rem; background: var(--surface); color: var(--muted); font-size: 0.8rem; font-weight: 650; }
+      .review-card { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 0.25rem 1rem rgb(24 49 42 / 8%); }
+      .column-headings, .review-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+      .column-headings { border-bottom: 1px solid var(--border); background: var(--surface-muted); }
+      .column-headings h2 { margin: 0; padding: 1rem 1.25rem; font-size: 0.9rem; letter-spacing: 0.025em; text-transform: uppercase; }
+      .column-headings h2 + h2, .translation { border-left: 1px solid var(--border); }
+      .review-row + .review-row { border-top: 1px solid var(--border); }
+      .source, .translation { min-width: 0; padding: 1.25rem; }
+      .block-label { display: block; margin-bottom: 0.5rem; color: var(--muted); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .source-text { margin-bottom: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+      textarea { display: block; width: 100%; min-height: 8rem; resize: vertical; border: 1px solid #aebdb7; border-radius: 0.5rem; padding: 0.75rem; background: #fff; color: var(--text); }
+      textarea:hover { border-color: #7c928a; }
+      textarea:focus-visible, button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+      .page-state { margin-bottom: 2rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 3rem 1.25rem; background: var(--surface); color: var(--muted); text-align: center; }
+      .page-state[data-kind="error"] { border-color: #e2b8b8; color: var(--error); }
+      .review-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 1rem; margin-block: 1rem 2rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; background: var(--surface); }
+      .note-field label { display: block; margin-bottom: 0.4rem; font-weight: 700; }
+      .optional { color: var(--muted); font-size: 0.875rem; font-weight: 400; }
+      .note-field textarea { min-height: 4.5rem; }
+      .action-area { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; }
+      .save-button, .retry-button { min-width: 9rem; border: 0; border-radius: 0.5rem; padding: 0.75rem 1.1rem; background: var(--primary); color: #fff; cursor: pointer; font-weight: 750; }
+      .save-button:hover:not(:disabled), .retry-button:hover:not(:disabled) { background: var(--primary-hover); }
+      .save-button:disabled, .retry-button:disabled { cursor: wait; opacity: 0.65; }
+      .status { min-height: 1.25rem; margin: 0; color: var(--muted); font-size: 0.875rem; text-align: right; }
+      .status[data-kind="success"] { color: var(--success); }
+      .status[data-kind="error"] { color: var(--error); }
+      [hidden] { display: none !important; }
+
+      @media (max-width: 45rem) {
+        .page-header, .review-actions { display: block; }
+        .version { display: inline-block; margin-top: 1rem; }
+        .column-headings { display: none; }
+        .review-row { display: block; }
+        .translation { border-top: 1px dashed var(--border); border-left: 0; background: var(--surface-muted); }
+        .action-area { align-items: stretch; margin-top: 1rem; }
+        .status { text-align: left; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Human review</p>
+        <h1 id="document-title">Translation review</h1>
+        <p class="metadata" id="document-metadata" hidden>
+          <span id="source-language"></span>
+          <span id="translation-engine"></span>
+          <span id="resource-id"></span>
+        </p>
+      </div>
+      <span class="version" id="version" hidden></span>
+    </header>
+
+    <main>
+      <section class="page-state" id="page-state" role="status" aria-live="polite">
+        <p id="page-state-message">Loading the next review…</p>
+        <button class="retry-button" id="retry-button" type="button" hidden>Try again</button>
+      </section>
+
+      <form id="review-form" hidden>
+        <section class="review-card" aria-labelledby="review-heading">
+          <div class="column-headings" id="review-heading">
+            <h2>Source</h2>
+            <h2>Swahili translation</h2>
+          </div>
+          <div id="review-rows"></div>
+        </section>
+
+        <section class="review-actions" aria-label="Save review">
+          <div class="note-field">
+            <label for="review-note">Review note <span class="optional">(optional)</span></label>
+            <textarea id="review-note" name="note" maxlength="2000" placeholder="Summarize the changes you made"></textarea>
+          </div>
+          <div class="action-area">
+            <button class="save-button" id="save-button" type="submit">Save edits</button>
+            <p class="status" id="save-status" role="status" aria-live="polite"></p>
+          </div>
+        </section>
+      </form>
+    </main>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const form = document.querySelector("#review-form");
+        const rows = document.querySelector("#review-rows");
+        const pageState = document.querySelector("#page-state");
+        const pageStateMessage = document.querySelector("#page-state-message");
+        const retryButton = document.querySelector("#retry-button");
+        const saveButton = document.querySelector("#save-button");
+        const saveStatus = document.querySelector("#save-status");
+        const noteField = document.querySelector("#review-note");
+        const title = document.querySelector("#document-title");
+        const metadata = document.querySelector("#document-metadata");
+        const language = document.querySelector("#source-language");
+        const engine = document.querySelector("#translation-engine");
+        const resource = document.querySelector("#resource-id");
+        const version = document.querySelector("#version");
+        let assignmentId = "";
+
+        const requestError = (detail, fallback) => {
+          if (typeof detail === "string") return detail;
+          if (Array.isArray(detail)) {
+            const messages = detail.map((item) => item && item.msg).filter(Boolean);
+            if (messages.length) return messages.join(" ");
+          }
+          return fallback;
+        };
+
+        const readJson = async (response) => {
+          try { return await response.json(); } catch (_) { return {}; }
+        };
+
+        // ReviewService creates assignment IDs with UUIDv5(URL namespace,
+        // "mamacare:review:<resource_id>"). The claim API intentionally returns
+        // only the review payload, so the UI reproduces that public identifier.
+        const assignmentIdFor = async (resourceId) => {
+          if (!window.crypto || !window.crypto.subtle) {
+            throw new Error("This browser cannot create the review assignment ID.");
+          }
+          const namespace = "6ba7b8119dad11d180b400c04fd430c8";
+          const namespaceBytes = Uint8Array.from(
+            namespace.match(/.{2}/g),
+            (pair) => Number.parseInt(pair, 16),
+          );
+          const nameBytes = new TextEncoder().encode(`mamacare:review:${resourceId}`);
+          const input = new Uint8Array(namespaceBytes.length + nameBytes.length);
+          input.set(namespaceBytes);
+          input.set(nameBytes, namespaceBytes.length);
+          const bytes = new Uint8Array(
+            await window.crypto.subtle.digest("SHA-1", input),
+          ).slice(0, 16);
+          bytes[6] = (bytes[6] & 0x0f) | 0x50;
+          bytes[8] = (bytes[8] & 0x3f) | 0x80;
+          const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+          return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        };
+
+        const showPageState = (message, kind = "", canRetry = false) => {
+          pageState.hidden = false;
+          pageState.dataset.kind = kind;
+          pageStateMessage.textContent = message;
+          retryButton.hidden = !canRetry;
+          form.hidden = true;
+        };
+
+        const showSaveStatus = (message, kind = "") => {
+          saveStatus.textContent = message;
+          saveStatus.dataset.kind = kind;
+        };
+
+        const textElement = (tag, className, text) => {
+          const element = document.createElement(tag);
+          element.className = className;
+          element.textContent = text;
+          return element;
+        };
+
+        const renderReview = (payload) => {
+          if (!payload || typeof payload.resource_id !== "string") {
+            throw new Error("The review API returned an invalid resource.");
+          }
+          if (!Array.isArray(payload.source_blocks) || !Array.isArray(payload.translated_units)) {
+            throw new Error("The review API returned invalid review content.");
+          }
+
+          const unitsByOrder = new Map(payload.translated_units.map((unit) => [unit.order, unit]));
+          rows.replaceChildren();
+          for (const block of payload.source_blocks) {
+            const unit = unitsByOrder.get(block.order);
+            if (!unit) throw new Error(`Translation block ${block.order + 1} is missing.`);
+
+            const row = document.createElement("div");
+            row.className = "review-row";
+            const sourceColumn = document.createElement("div");
+            sourceColumn.className = "source";
+            sourceColumn.append(
+              textElement("span", "block-label", `${String(block.kind).replaceAll("_", " ")} ${block.order + 1}`),
+              textElement("p", "source-text", block.text),
+            );
+
+            const translationColumn = document.createElement("div");
+            translationColumn.className = "translation";
+            const label = textElement("label", "block-label", `Translation ${block.order + 1}`);
+            label.htmlFor = `translation-${block.order}`;
+            const textarea = document.createElement("textarea");
+            textarea.id = label.htmlFor;
+            textarea.name = label.htmlFor;
+            textarea.required = true;
+            textarea.value = unit.translated_text;
+            textarea.dataset.order = String(unit.order);
+            textarea.dataset.sourceText = unit.source_text;
+            textarea.dataset.confidence = unit.confidence === null ? "" : String(unit.confidence);
+            translationColumn.append(label, textarea);
+            row.append(sourceColumn, translationColumn);
+            rows.append(row);
+          }
+
+          title.textContent = payload.title || "Untitled translation";
+          language.textContent = `Source language: ${payload.source_language || "Unknown"}`;
+          engine.textContent = payload.engine ? `Engine: ${payload.engine}` : "";
+          engine.hidden = !payload.engine;
+          resource.textContent = `Resource: ${payload.resource_id}`;
+          version.textContent = `Version ${payload.version_number}`;
+          version.hidden = false;
+          metadata.hidden = false;
+          noteField.value = "";
+          form.dataset.dirty = "false";
+          pageState.hidden = true;
+          form.hidden = false;
+        };
+
+        const loadNextReview = async () => {
+          retryButton.disabled = true;
+          showPageState("Loading the next review…");
+          try {
+            const response = await fetch("/review/next", {
+              method: "GET",
+              credentials: "same-origin",
+              headers: { Accept: "application/json" },
+            });
+            if (response.status === 204) {
+              assignmentId = "";
+              showPageState("The review queue is empty.");
+              return;
+            }
+            const payload = await readJson(response);
+            if (!response.ok) {
+              throw new Error(requestError(payload.detail, `Unable to load a review (HTTP ${response.status}).`));
+            }
+            assignmentId = await assignmentIdFor(payload.resource_id);
+            renderReview(payload);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to load a review.";
+            showPageState(message, "error", true);
+          } finally {
+            retryButton.disabled = false;
+          }
+        };
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (!form.reportValidity()) return;
+          if (!assignmentId) {
+            showSaveStatus("No review assignment is loaded.", "error");
+            return;
+          }
+
+          const units = [...rows.querySelectorAll("textarea[data-order]")].map((field) => ({
+            order: Number(field.dataset.order),
+            source_text: field.dataset.sourceText,
+            translated_text: field.value.trim(),
+            confidence: field.dataset.confidence === "" ? null : Number(field.dataset.confidence),
+          }));
+          if (units.some((unit) => !unit.translated_text)) {
+            showSaveStatus("Every translation must have a value before saving.", "error");
+            return;
+          }
+
+          saveButton.disabled = true;
+          saveButton.textContent = "Saving…";
+          showSaveStatus("Saving a new human version…");
+          try {
+            const note = noteField.value.trim();
+            const decisionResponse = await fetch(
+              `/review/${encodeURIComponent(assignmentId)}/decision`,
+              {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  Accept: "application/json",
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  decision: "needs_edit",
+                  note: note || "Translation edit submitted from review UI.",
+                }),
+              },
+            );
+            const decisionResult = await readJson(decisionResponse);
+            if (!decisionResponse.ok) {
+              throw new Error(
+                requestError(
+                  decisionResult.detail,
+                  `Unable to start the edit (HTTP ${decisionResponse.status}).`,
+                ),
+              );
+            }
+
+            const response = await fetch(`/review/${encodeURIComponent(assignmentId)}/edit`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { Accept: "application/json", "Content-Type": "application/json" },
+              body: JSON.stringify({ units, note: note || null }),
+            });
+            const result = await readJson(response);
+            if (!response.ok) {
+              throw new Error(requestError(result.detail, `Unable to save (HTTP ${response.status}).`));
+            }
+            if (result.version_number) version.textContent = `Version ${result.version_number}`;
+            showSaveStatus(
+              result.version_number ? `Edits saved as version ${result.version_number}.` : "Edits saved.",
+              "success",
+            );
+            form.dataset.dirty = "false";
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to save edits.";
+            showSaveStatus(message, "error");
+          } finally {
+            saveButton.disabled = false;
+            saveButton.textContent = "Save edits";
+          }
+        });
+
+        form.addEventListener("input", () => {
+          form.dataset.dirty = "true";
+          if (saveStatus.dataset.kind === "success") showSaveStatus("");
+        });
+        retryButton.addEventListener("click", loadNextReview);
+        window.addEventListener("beforeunload", (event) => {
+          if (form.dataset.dirty !== "true") return;
+          event.preventDefault();
+          event.returnValue = "";
+        });
+        loadNextReview();
+      })();
+    </script>
+  </body>
+</html>
