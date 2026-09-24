@@ -149,13 +149,31 @@ def build_translator(settings: PipelineSettings) -> Translator:
     if settings.translation_engine == "nllb":
         from .adapters.translation.nllb_translator import NllbTranslator
         return NllbTranslator(batch_size=settings.translation_batch_size)
+    if settings.translation_engine == "gemini":
+        from .adapters.translation.gemini_translator import GeminiTranslator
+        api_key = (
+            os.getenv("GEMINI_API_KEY")
+            or settings.translation_api_key
+            or os.getenv("PIPELINE_TRANSLATION_API_KEY")
+        )
+        if not api_key:
+            raise ValueError(
+                "gemini translation requires PIPELINE_TRANSLATION_API_KEY "
+                "or GEMINI_API_KEY"
+            )
+        return GeminiTranslator(
+            api_key=api_key,
+            model=settings.gemini_model,
+            batch_size=settings.translation_batch_size,
+            timeout_seconds=settings.gemini_timeout_seconds,
+        )
     if settings.translation_engine in {"google", "aws", "azure"}:
         from .adapters.translation.cloud_translator import CloudTranslator
         api_key = os.getenv("PIPELINE_TRANSLATION_API_KEY")
         if not api_key:
             raise ValueError(f"{settings.translation_engine} translation requires PIPELINE_TRANSLATION_API_KEY")
         return CloudTranslator(provider=settings.translation_engine, api_key=api_key, region=os.getenv("PIPELINE_AWS_REGION"), batch_size=settings.translation_batch_size)
-    raise ValueError(f"Unsupported translation engine: {settings.translation_engine!r}. Supported: passthrough, nllb, google, aws, azure")
+    raise ValueError(f"Unsupported translation engine: {settings.translation_engine!r}. Supported: passthrough, nllb, gemini, google, aws, azure")
 
 
 def build_detector(settings: PipelineSettings) -> LanguageDetector:

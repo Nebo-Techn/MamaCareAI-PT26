@@ -1,5 +1,8 @@
 """FastText language detector adapter implementation."""
 
+import re
+import sys
+
 from ...ports.language_detector import DetectionResult
 
 
@@ -36,15 +39,15 @@ class FastTextDetector:
                 import importlib.util
                 if importlib.util.find_spec("langdetect") is not None:
                     self._use_langdetect = True
-                    print(f"Warning: Could not load fastText model from {self._model_path}: {e}")
-                    print("Falling back to langdetect library for language detection.")
+                    print(f"Warning: Could not load fastText model from {self._model_path}: {e}", file=sys.stderr)
+                    print("Falling back to langdetect library for language detection.", file=sys.stderr)
                 else:
                     raise ImportError("langdetect not available")
             except ImportError:
                 # Use heuristic as last fallback
                 self._use_heuristic = True
-                print(f"Warning: Could not load fastText model from {self._model_path}: {e}")
-                print("langdetect not available. Falling back to heuristic-based language detection for testing.")
+                print(f"Warning: Could not load fastText model from {self._model_path}: {e}", file=sys.stderr)
+                print("langdetect not available. Falling back to heuristic-based language detection for testing.", file=sys.stderr)
 
     def detect(self, text: str) -> DetectionResult:
         """Detect language using fastText, langdetect, or heuristic fallback.
@@ -106,7 +109,7 @@ class FastTextDetector:
             # We catch Exception here because langdetect can raise various exceptions
             # including LangDetectException, AttributeError, etc. that we don't
             # want to explicitly import or handle separately.
-            print(f"Warning: langdetect failed: {e}. Falling back to heuristic detection.")
+            print(f"Warning: langdetect failed: {e}. Falling back to heuristic detection.", file=sys.stderr)
             return self._heuristic_detect(text)
 
     def _heuristic_detect(self, text: str) -> DetectionResult:
@@ -116,18 +119,42 @@ class FastTextDetector:
         nor langdetect are available. It uses basic character patterns to detect
         common languages.
         """
-        text_lower = text.lower()
+        # Count whole words. The previous substring check treated English words
+        # such as "normal" as Swahili because they contain "na".
+        words = re.findall(r"[a-zA-Z]+", text.casefold())
+        english_words = {
+            "about", "and", "are", "can", "during", "for", "from", "in",
+            "is", "of", "on", "that", "the", "this", "to", "was", "were",
+            "will", "with", "you", "your",
+        }
+        swahili_words = {
+            "afya", "asante", "habari", "hii", "kama", "katika", "kila",
+            "kwa", "lakini", "mama", "mimba", "mtoto", "mwaka", "na",
+            "ni", "siku", "wa", "ya", "yako", "za",
+        }
+        english_score = sum(word in english_words for word in words)
+        swahili_score = sum(word in swahili_words for word in words)
 
-        # Simple heuristic detection for common languages
-        if any(c in text_lower for c in "habcdghlmnprstvwxyz"):  # Swahili characters
-            swahili_words = ["habari", "asante", "kwa", "na", "la", "za", "ya", "kila", "mwaka", "siku"]
-            if any(word in text_lower for word in swahili_words):
-                return DetectionResult(language="sw", confidence=0.7, alternatives=(("en", 0.3),))
+        english_signal = english_score >= 2 or "the" in words
+        swahili_signal = swahili_score >= 2 or bool(
+            {"asante", "habari", "kwa"}.intersection(words)
+        )
 
-        if any(c in text_lower for c in "abcdefghijklmnopqrstuvwxyz"):  # English
-            english_words = ["the", "and", "is", "in", "to", "of", "a", "for", "with", "on"]
-            if any(word in text_lower for word in english_words):
-                return DetectionResult(language="en", confidence=0.8, alternatives=(("sw", 0.2),))
+        if english_signal and english_score > swahili_score * 1.5:
+            confidence = min(0.99, 0.75 + (english_score - swahili_score) / 20)
+            return DetectionResult(
+                language="en",
+                confidence=confidence,
+                alternatives=(("sw", 1.0 - confidence),),
+            )
+
+        if swahili_signal and swahili_score > english_score * 1.5:
+            confidence = min(0.99, 0.75 + (swahili_score - english_score) / 20)
+            return DetectionResult(
+                language="sw",
+                confidence=confidence,
+                alternatives=(("en", 1.0 - confidence),),
+            )
 
         # Default to unknown with low confidence
         return DetectionResult(language="unknown", confidence=0.3, alternatives=())

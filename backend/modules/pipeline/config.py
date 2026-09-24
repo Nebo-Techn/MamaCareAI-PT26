@@ -22,7 +22,12 @@ the next person deploys without.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_ENV_FILE = Path(__file__).resolve().parents[2] / "config" / ".env"
 
 
 class PipelineSettings(BaseSettings):
@@ -34,7 +39,7 @@ class PipelineSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file="config/.env", env_prefix="PIPELINE_", extra="ignore"
+        env_file=_BACKEND_ENV_FILE, env_prefix="PIPELINE_", extra="ignore"
     )
 
     # --- Adapter selection: the free MVP stack by default --------------------
@@ -54,11 +59,19 @@ class PipelineSettings(BaseSettings):
     target_language: str = "sw"
 
     # --- Translation (PDF 3.4, PDF section 6) --------------------------------
-    translation_engine: str = "nllb"  # nllb | google | aws | azure
+    translation_engine: str = "nllb"  # nllb | gemini | google | aws | azure
     # Max characters per chunk sent to the MT engine. Provider-dependent —
     # check the actual API limit before changing this.
     translation_max_chunk_chars: int = 4000
     translation_batch_size: int = 16
+    translation_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GEMINI_API_KEY", "PIPELINE_TRANSLATION_API_KEY"
+        ),
+    )
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_timeout_seconds: float = 60.0
 
     # --- Retries & backoff (PDF section 4, Orchestration) --------------------
     max_attempts: int = 5

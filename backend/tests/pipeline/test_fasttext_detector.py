@@ -33,9 +33,17 @@ class TestHeuristicDetection:
         """Test basic English detection."""
         text = "The quick brown fox jumps over the lazy dog."
         result = detector_with_fallback.detect(text)
-        # The heuristic may detect either English or Swahili depending on character overlap
-        assert result.language in ["en", "sw", "unknown"]
+        assert result.language == "en"
         assert 0.0 <= result.confidence <= 1.0
+
+    def test_english_words_containing_na_are_not_swahili(self, detector_with_fallback):
+        """Regression: substring 'na' in 'pregnancy/normal' is not a Swahili word."""
+        text = (
+            "Pregnancy lasts about 40 weeks, counting from the first day of "
+            "your last normal period. The weeks are grouped into trimesters."
+        )
+        result = detector_with_fallback.detect(text)
+        assert result.language == "en"
 
     def test_swahili_detection(self, detector_with_fallback):
         """Test basic Swahili detection."""
