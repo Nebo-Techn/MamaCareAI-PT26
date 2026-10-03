@@ -1,6 +1,7 @@
 # Web API
 fastapi
 uvicorn[standard]
+python-multipart
 
 # Config / settings
 pydantic-settings
@@ -39,7 +40,8 @@ httpx
 trafilatura         # main-content extraction from HTML (drops nav/boilerplate)
 chardet             # charset fallback when decoding HTML (meta/header both absent)
 # pymupdf             # PDF text-layer extraction
-# sqlalchemy          # repositories; same code path for SQLite (dev) and Postgres (prod)
+sqlalchemy>=2.0.54
+alembic>=1.14.0
 # fasttext-wheel      # lid.176 language detection (prebuilt wheels; plain `fasttext` needs a compiler)
 
 # Sprint 3 — translation + review
@@ -57,5 +59,5 @@ sentencepiece       # NLLB tokenizer
 
 # Production only (not needed for the free-tier MVP)
 boto3                 # S3 object storage + SQS queue
-# psycopg[binary]     # PostgreSQL driver
+psycopg[binary]>=3.2.4  # PostgreSQL driver
 # opensearch-py       # OpenSearch full-text index
