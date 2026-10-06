@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
+from .adapters.storage.content_deduplicator import ContentDeduplicator
 from .config import PipelineSettings
 from .domain.errors import InvalidStateTransition
 from .ports.deduplicator import Deduplicator
@@ -213,10 +214,45 @@ def build_extractors(settings: PipelineSettings) -> ExtractorRegistry:
 
 
 def build_container(settings: PipelineSettings | None = None) -> Container:
-    raise RuntimeError(
-        "Production container cannot be built until the SQL repository adapter "
-        "and its SQLAlchemy session factory are implemented. Use "
-        "build_test_container() for local and test execution."
+    """Wire the pipeline from environment settings.
+
+    The SQL repositories come from `build_repositories()`, which creates one
+    engine and four repos backed by it.  The engine is kept on the Container
+    so callers can dispose it on shutdown rather than leaking connections.
+    Everything else (queue backend, object store, search index, translation
+    engine, language detector) is selected by the corresponding factory
+    functions, so flipping `PIPELINE_*` env vars reconfigures the whole
+    pipeline without touching this line.
+    """
+    if settings is None:
+        settings = PipelineSettings()
+
+    from .adapters.storage.repository_factory import build_repositories
+
+    repos = build_repositories(settings.database_url)
+
+    queue = build_queue(settings)
+    object_store = build_object_store(settings)
+    search = build_search_index(settings)
+    detector = build_detector(settings)
+    translator = build_translator(settings)
+    fetchers = build_fetchers(settings)
+    extractors = build_extractors(settings)
+
+    return Container(
+        settings=settings,
+        queue=queue,
+        object_store=object_store,
+        search=search,
+        deduplicator=ContentDeduplicator(resources=repos["resources"]),
+        detector=detector,
+        translator=translator,
+        fetchers=fetchers,
+        extractors=extractors,
+        resources=repos["resources"],
+        documents=repos["documents"],
+        versions=repos["versions"],
+        reviews=repos["reviews"],
     )
 
 

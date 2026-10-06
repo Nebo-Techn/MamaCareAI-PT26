@@ -11,6 +11,25 @@ jobs:
     defaults:
       run:
         working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pipeline
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: mamacareai_test
+        options: >-
+          --health-cmd "pg_isready -U pipeline"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      PIPELINE_DATABASE_URL: postgresql+psycopg://pipeline:test@localhost:5432/mamacareai_test
+
     steps:
       - uses: actions/checkout@v4
 
