@@ -216,7 +216,7 @@ def test_url_duplicate_is_rejected_before_download() -> None:
         source_url=url,
         status=ResourceStatus.SUBMITTED,
     )
-    resources.save(resource)
+    resources.add(resource)
 
     job = Job(
         job_id="job-url-duplicate",
@@ -250,7 +250,7 @@ def test_content_duplicate_is_rejected_after_download() -> None:
         source_url=url,
         status=ResourceStatus.SUBMITTED,
     )
-    resources.save(resource)
+    resources.add(resource)
 
     job = Job(
         job_id="job-content-duplicate",
@@ -317,7 +317,7 @@ def test_extraction_rejects_unusable_short_document() -> None:
         status=ResourceStatus.FETCHED,
         raw_object_key="raw/test-resource/web",
     )
-    resources.save(resource)
+    resources.add(resource)
 
     job = Job(
         job_id="job-short-doc",
@@ -357,7 +357,7 @@ def test_extraction_rejects_noncontiguous_block_order() -> None:
         status=ResourceStatus.FETCHED,
         raw_object_key="raw/test-resource/web",
     )
-    resources.save(resource)
+    resources.add(resource)
 
     job = Job(
         job_id="job-bad-order",
@@ -403,7 +403,7 @@ def test_extraction_preserves_original_text_blocks() -> None:
         status=ResourceStatus.FETCHED,
         raw_object_key="raw/test-resource/web",
     )
-    resources.save(resource)
+    resources.add(resource)
 
     job = Job(
         job_id="job-preserve-text",
