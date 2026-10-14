@@ -14,7 +14,7 @@ from ..ports.repositories import (
     ReviewRepository,
     VersionRepository,
 )
-from ..ports.translator import Translator
+from ..ports.translator import Translator, validate_translation_output
 from .base import Stage, StageResult
 
 
@@ -69,14 +69,32 @@ class TranslateStage(Stage):
 
         document = self._documents.get_document(resource.resource_id)
         chunks = self._chunker.chunk(document.blocks)
-        translated_chunks = self._translator.translate_batch(
-            [chunk.text for chunk in chunks],
-            source_language=resource.detected_language,
-            target_language=self._target_language,
-        )
-        if len(translated_chunks) != len(chunks):
-            raise TranslationError(
-                "translator returned a different number of chunks than it received"
+        source_texts = [chunk.text for chunk in chunks]
+        translate = getattr(self._translator, "translate", None)
+        if callable(translate):
+            translated_chunks = list(
+                translate(
+                    source_texts,
+                    source_language=resource.detected_language,
+                    target_language=self._target_language,
+                ).chunks
+            )
+        else:
+            raw_chunks = self._translator.translate_batch(
+                source_texts,
+                source_language=resource.detected_language,
+                target_language=self._target_language,
+            )
+            if len(raw_chunks) != len(chunks):
+                raise TranslationError(
+                    "translator returned a different number of chunks than it received"
+                )
+            translated_chunks = list(
+                validate_translation_output(
+                    source_texts,
+                    raw_chunks,
+                    engine=self._translator.engine_name,
+                )
             )
 
         translated_texts = [chunk.text for chunk in translated_chunks]

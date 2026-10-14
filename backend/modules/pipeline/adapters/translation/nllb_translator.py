@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ...domain.errors import TransientError, TranslationError
-from ...ports.translator import TranslatedChunk, Translator
+from ...ports.translator import (
+    MalformedTranslationOutput,
+    TranslatedChunk,
+    Translator,
+    UnsupportedLanguagePair,
+)
 
 
 class NllbTranslator(Translator):
@@ -85,11 +90,17 @@ class NllbTranslator(Translator):
         source = source_language.lower()
         target = target_language.lower()
         if not self.supports(source, target):
-            raise TranslationError(
-                f"NLLB does not support translation from {source_language!r} to {target_language!r}"
+            raise UnsupportedLanguagePair(
+                f"NLLB does not support translation from {source_language!r} to {target_language!r}",
+                engine=self.engine_name,
+                source_language=source_language,
+                target_language=target_language,
             )
         if not all(isinstance(text, str) for text in texts):
-            raise TranslationError("NLLB translation inputs must all be strings")
+            raise MalformedTranslationOutput(
+                "NLLB translation inputs must all be strings",
+                engine=self.engine_name,
+            )
         if not texts:
             return []
 
@@ -98,7 +109,10 @@ class NllbTranslator(Translator):
         try:
             target_token_id = self._tokenizer.convert_tokens_to_ids(target_code)
             if target_token_id is None or target_token_id == self._tokenizer.unk_token_id:
-                raise TranslationError(f"NLLB tokenizer has no token for target language {target!r}")
+                raise MalformedTranslationOutput(
+                    f"NLLB tokenizer has no token for target language {target!r}",
+                    engine=self.engine_name,
+                )
 
             results: list[TranslatedChunk | None] = [None] * len(texts)
             indexed = sorted(enumerate(texts), key=lambda item: len(item[1]))
@@ -121,12 +135,18 @@ class NllbTranslator(Translator):
                     )
                 translations = self._tokenizer.batch_decode(generated, skip_special_tokens=True)
                 if len(translations) != len(batch):
-                    raise TransientError("NLLB returned an unexpected number of translations")
+                    raise MalformedTranslationOutput(
+                        "NLLB returned an unexpected number of translations",
+                        engine=self.engine_name,
+                    )
                 for (index, _), translation in zip(batch, translations):
                     results[index] = TranslatedChunk(text=translation, confidence=None)
 
             if any(result is None for result in results):
-                raise TransientError("NLLB did not produce every translation")
+                raise MalformedTranslationOutput(
+                    "NLLB did not produce every translation",
+                    engine=self.engine_name,
+                )
             return [result for result in results if result is not None]
         except TranslationError:
             raise

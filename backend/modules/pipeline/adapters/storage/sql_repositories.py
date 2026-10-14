@@ -647,8 +647,6 @@ class SqlVersionRepository(VersionRepository):
         stmt = select(
             func.coalesce(func.max(ContentVersionORM.version_number), 0)
         ).where(ContentVersionORM.resource_id == resource_id)
-        if session.bind is not None and session.bind.dialect.name == "postgresql":
-            stmt = stmt.with_for_update()
         return session.execute(stmt).scalar() or 0
 
     def _build_row(

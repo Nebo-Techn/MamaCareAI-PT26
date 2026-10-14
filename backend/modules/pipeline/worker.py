@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             settings = PipelineSettings()
             container = build_container(settings)
-        except RuntimeError as exc:
+        except (RuntimeError, FileNotFoundError) as exc:
             # Until SQL repos are ready, fall back to test container for local/CI
             logger.warning(json.dumps({"stage": args.stage, "msg": f"build_container failed, using test container: {exc}"}))
             container = build_test_container()

@@ -281,7 +281,7 @@ def test_publish_blocks_on_unapproved_license(repos):
         reviews=repos["reviews"],
         versions=repos["versions"],
         search=None,
-        compliance_gate=ComplianceGate(),
+        compliance_gate=ComplianceGate(allowed_licenses=frozenset({"CC-BY-4.0"})),
     )
 
     try:

@@ -8,12 +8,17 @@ from typing import Any
 import httpx
 
 from ...domain.errors import (
-    PermanentError,
     ProviderRateLimited,
-    TransientError,
     TranslationError,
 )
-from ...ports.translator import TranslatedChunk, Translator
+from ...ports.translator import (
+    MalformedTranslationOutput,
+    TranslatedChunk,
+    TranslationConfigurationError,
+    TranslationProviderUnavailable,
+    Translator,
+    UnsupportedLanguagePair,
+)
 
 
 class GeminiTranslator(Translator):
@@ -66,9 +71,12 @@ class GeminiTranslator(Translator):
         target_language: str = "sw",
     ) -> list[TranslatedChunk]:
         if not self.supports(source_language, target_language):
-            raise TranslationError(
+            raise UnsupportedLanguagePair(
                 f"Gemini translation does not support {source_language!r} "
-                f"to {target_language!r}"
+                f"to {target_language!r}",
+                engine=self.engine_name,
+                source_language=source_language,
+                target_language=target_language,
             )
         if not all(isinstance(text, str) for text in texts):
             raise TranslationError("Gemini translation inputs must all be strings")
@@ -117,7 +125,9 @@ class GeminiTranslator(Translator):
                 f"/models/{self._model}:generateContent", json=payload
             )
         except (httpx.TimeoutException, httpx.TransportError) as exc:
-            raise TransientError(f"Gemini request failed: {exc}") from exc
+            raise TranslationProviderUnavailable(
+                f"Gemini request failed: {exc}", engine=self.engine_name
+            ) from exc
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
@@ -130,14 +140,16 @@ class GeminiTranslator(Translator):
                 retry_after_seconds=retry_seconds,
             )
         if response.status_code in {401, 403}:
-            raise PermanentError(
+            raise TranslationConfigurationError(
                 f"Gemini authentication failed (HTTP {response.status_code}): "
                 f"{self._error_message(response)}. Check or rotate GEMINI_API_KEY "
-                "and ensure the Gemini API is enabled for its Google project"
+                "and ensure the Gemini API is enabled for its Google project",
+                engine=self.engine_name,
             )
         if response.status_code >= 500:
-            raise TransientError(
-                f"Gemini service returned HTTP {response.status_code}"
+            raise TranslationProviderUnavailable(
+                f"Gemini service returned HTTP {response.status_code}",
+                engine=self.engine_name,
             )
         if response.status_code >= 400:
             raise TranslationError(
@@ -151,15 +163,19 @@ class GeminiTranslator(Translator):
             raw = "".join(part.get("text", "") for part in parts).strip()
             translations = json.loads(self._strip_json_fence(raw))
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise TranslationError("Gemini returned an invalid translation response") from exc
+            raise MalformedTranslationOutput(
+                "Gemini returned an invalid translation response",
+                engine=self.engine_name,
+            ) from exc
 
         if (
             not isinstance(translations, list)
             or len(translations) != len(texts)
             or not all(isinstance(item, str) and item.strip() for item in translations)
         ):
-            raise TranslationError(
-                "Gemini returned a different number of translations than requested"
+            raise MalformedTranslationOutput(
+                "Gemini returned a different number of translations than requested",
+                engine=self.engine_name,
             )
         return translations
 
