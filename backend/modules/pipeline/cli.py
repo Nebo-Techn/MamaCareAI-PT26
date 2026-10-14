@@ -163,16 +163,26 @@ def _cmd_process_url(args: argparse.Namespace) -> int:
         chunks = Chunker(max_chars=settings.translation_max_chunk_chars).chunk(
             document.blocks
         )
-        translated = translator.translate_batch(
-            [chunk.text for chunk in chunks],
-            source_language="en",
-            target_language=settings.target_language,
-        )
-        if len(translated) != len(chunks):
-            raise ValueError(
-                "translator returned a different number of chunks than it received"
+        source_texts = [chunk.text for chunk in chunks]
+        translate = getattr(translator, "translate", None)
+        if callable(translate):
+            translated = translate(
+                source_texts,
+                source_language="en",
+                target_language=settings.target_language,
+            ).texts
+        else:
+            translated_chunks = translator.translate_batch(
+                source_texts,
+                source_language="en",
+                target_language=settings.target_language,
             )
-        translated_text = "\n\n".join(chunk.text for chunk in translated)
+            if len(translated_chunks) != len(chunks):
+                raise ValueError(
+                    "translator returned a different number of chunks than it received"
+                )
+            translated = [chunk.text for chunk in translated_chunks]
+        translated_text = "\n\n".join(translated)
         print("=== ORIGINAL (en) ===")
         print(extracted_text)
         print(f"\n=== TRANSLATED ({settings.target_language}) ===")
